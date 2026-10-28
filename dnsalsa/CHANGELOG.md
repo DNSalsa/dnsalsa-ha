@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4
+
+- The DNSalsa dashboard shows your Home Assistant version when you enter the pairing code.
+
 ## 1.0.3
 
 - The reverse proxy check no longer shows up in Home Assistant as a failed login from 203.0.113.7.

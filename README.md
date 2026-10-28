@@ -1,6 +1,6 @@
 # DNSalsa for Home Assistant
 
-Reach your Home Assistant from anywhere at your own dnsalsa.nl address. No port forwarding, and your home IP stays hidden. You need a [DNSalsa](https://dnsalsa.nl) account with the Home Assistant subscription.
+Reach your Home Assistant from anywhere at your own dnsalsa.nl address. No port forwarding, and your home IP stays hidden. You need a [DNSalsa](https://dnsalsa.nl) account with the Remote subscription.
 
 [![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FDNSalsa%2Fdnsalsa-ha)
 

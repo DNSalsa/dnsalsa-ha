@@ -8,8 +8,8 @@ ARG CLOUDFLARED_VERSION
 # To update: change CLOUDFLARED_VERSION in build.yaml and both checksums below.
 RUN apk add --no-cache python3 \
  && case "${BUILD_ARCH}" in \
-      amd64)   ARCH=amd64; SUM=d33ff2d14475178d2012c2c56beba87389ac5ded27649519f198a7d3134a99db ;; \
-      aarch64) ARCH=arm64; SUM=e6422b9d4f72d3194bc5a38676f13667c06666523217b842a877d72a80b5ac08 ;; \
+      amd64)   ARCH=amd64; SUM=e1bc0cf084fd9e590554fe769a86b1db46701c3f847a43d902f7b974a4e16298 ;; \
+      aarch64) ARCH=arm64; SUM=72e0d05a67e09da87cf495e409a28c3cc5994dd23fc66a982eebea6a55923b7d ;; \
       *) echo "Unsupported architecture: ${BUILD_ARCH}"; exit 1 ;; \
     esac \
  && curl -fsSL -o /usr/local/bin/cloudflared \

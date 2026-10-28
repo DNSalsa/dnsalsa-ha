@@ -56,6 +56,21 @@ jobs:
           chmod +x cloudflared-linux-amd64 && ./cloudflared-linux-amd64 --version
           rm -f cloudflared-linux-amd64 cloudflared-linux-arm64
 
+      # A pull request opened by this workflow doesn't start other workflows, so test the change here first.
+      - name: Test the new version
+        if: steps.v.outputs.update == 'yes'
+        env:
+          LATEST: ${{ steps.v.outputs.latest }}
+          AMD64: ${{ steps.sums.outputs.amd64 }}
+          ARM64: ${{ steps.sums.outputs.arm64 }}
+        run: |
+          sed -i "s/^  CLOUDFLARED_VERSION: .*/  CLOUDFLARED_VERSION: $LATEST/" dnsalsa/build.yaml
+          sed -i -E "s/(amd64\)   ARCH=amd64; SUM=)[0-9a-f]{64}/\1$AMD64/; s/(aarch64\) ARCH=arm64; SUM=)[0-9a-f]{64}/\1$ARM64/" dnsalsa/Dockerfile
+          base=$(sed -n 's/^  amd64: //p' dnsalsa/build.yaml)
+          docker build --build-arg BUILD_FROM="$base" --build-arg BUILD_ARCH=amd64 --build-arg CLOUDFLARED_VERSION="$LATEST" -t dnsalsa-ha:test dnsalsa
+          docker run --rm --entrypoint /usr/local/bin/cloudflared dnsalsa-ha:test --version
+          git checkout -- dnsalsa/build.yaml dnsalsa/Dockerfile
+
       - name: Open pull request
         if: steps.v.outputs.update == 'yes'
         env:

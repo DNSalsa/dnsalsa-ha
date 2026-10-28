@@ -1,0 +1,41 @@
+# Unit tests for the app, and a real build of the image for amd64 (downloads cloudflared and checks its checksum).
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Unit tests
+        run: python3 -W error::ResourceWarning -m unittest discover -s tests -v
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build like Home Assistant does (amd64)
+        run: |
+          base=$(sed -n 's/^  amd64: //p' dnsalsa/build.yaml)
+          version=$(sed -n 's/^  CLOUDFLARED_VERSION: //p' dnsalsa/build.yaml)
+          docker build --build-arg BUILD_FROM="$base" --build-arg BUILD_ARCH=amd64 --build-arg CLOUDFLARED_VERSION="$version" -t dnsalsa-ha:test dnsalsa
+      - name: cloudflared runs
+        run: docker run --rm --entrypoint /usr/local/bin/cloudflared dnsalsa-ha:test --version
+      - name: The app starts and answers on its ingress port
+        run: |
+          docker run -d --name app -e DNSALSA_DATA=/tmp -e DNSALSA_HA_URL=http://127.0.0.1:9 dnsalsa-ha:test
+          for i in $(seq 1 20); do docker exec app python3 -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8099/status',timeout=2)" && break; sleep 1; done
+          docker exec app python3 -c "import urllib.request,json;print(json.load(urllib.request.urlopen('http://127.0.0.1:8099/status',timeout=2)))"
+          docker logs app | tail -5
+          docker rm -f app

@@ -1,0 +1,344 @@
+"""DNSalsa app for Home Assistant.
+
+Pairs with a DNSalsa account by a short code, then runs cloudflared with the tunnel token DNSalsa
+hands over. Shows its state on the DNSalsa page in the Home Assistant sidebar (ingress).
+
+Only the Python standard library: no packages to install or update.
+"""
+import html
+import json
+import os
+import subprocess
+import threading
+import time
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+DATA = os.environ.get('DNSALSA_DATA', '/data')
+STATE_FILE = os.path.join(DATA, 'state.json')
+OPTIONS_FILE = os.path.join(DATA, 'options.json')
+HA_URL = os.environ.get('DNSALSA_HA_URL', 'http://homeassistant:8123')
+INGRESS_PORT = int(os.environ.get('DNSALSA_PORT', '8099'))
+CLOUDFLARED = os.environ.get('DNSALSA_CLOUDFLARED', '/usr/local/bin/cloudflared')
+METRICS = '127.0.0.1:20241'
+INGRESS_PEERS = {'172.30.32.2', '127.0.0.1'}  # Home Assistant's ingress proxy (and local tests)
+
+
+def log(msg):
+    print(f'[dnsalsa] {msg}', flush=True)
+
+
+def options():
+    try:
+        with open(OPTIONS_FILE) as f:
+            o = json.load(f)
+    except (OSError, ValueError):
+        o = {}
+    return {'server': (o.get('server') or 'https://dnsalsa.nl').rstrip('/')}
+
+
+class State:
+    """Everything the UI shows, guarded by one lock."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.saved = self._load()      # {token, hostname, url} once paired
+        self.code = None               # pairing code shown to the user
+        self.code_expires = 0
+        self.error = None
+        self.proxy_ok = None           # reverse proxy setting in Home Assistant
+        self.connected = False
+        self.wake = threading.Event()  # nudges the background loops
+
+    def _load(self):
+        try:
+            with open(STATE_FILE) as f:
+                s = json.load(f)
+            return s if s.get('token') else None
+        except (OSError, ValueError):
+            return None
+
+    def save(self, data):
+        tmp = STATE_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(data, f)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, STATE_FILE)
+        with self.lock:
+            self.saved = data
+            self.code = None
+
+    def forget(self):
+        try:
+            os.remove(STATE_FILE)
+        except OSError:
+            pass
+        with self.lock:
+            self.saved = None
+            self.connected = False
+            self.error = None
+
+
+STATE = State()
+
+
+def http_json(method, url, body=None, headers=None, timeout=15):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers={
+        'Content-Type': 'application/json', 'User-Agent': 'dnsalsa-ha/1.0', **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, json.loads(r.read() or b'{}')
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read() or b'{}')
+        except ValueError:
+            return e.code, {}
+
+
+def device_name():
+    """Home Assistant version and architecture, shown in the dashboard when the user enters the code."""
+    token = os.environ.get('SUPERVISOR_TOKEN')
+    if not token:
+        return 'Home Assistant'
+    try:
+        _, core = http_json('GET', 'http://supervisor/core/info', headers={'Authorization': f'Bearer {token}'}, timeout=5)
+        d = core.get('data', {})
+        return f"Home Assistant {d.get('version', '')} ({d.get('arch', '')})".replace(' ()', '')
+    except Exception:  # noqa: BLE001  any failure just means a plainer label
+        return 'Home Assistant'
+
+
+# ── Pairing ──
+def pairing_loop():
+    while True:
+        if STATE.saved:
+            STATE.wake.wait(30)
+            STATE.wake.clear()
+            continue
+        server = options()['server']
+        try:
+            status, r = http_json('POST', f'{server}/api/pair/start', {'device': device_name()})
+            if status != 200:
+                raise RuntimeError(r.get('message') or f'HTTP {status}')
+            with STATE.lock:
+                STATE.code, STATE.code_expires, STATE.error = r['code'], r['expiresAt'] / 1000, None
+            log(f"Pairing code: {r['code']}  In your DNSalsa dashboard: hostname > Setup > Home Assistant.")
+            secret = r['secret']
+            while time.time() < STATE.code_expires and not STATE.saved:
+                time.sleep(3)
+                status, p = http_json('POST', f'{server}/api/pair/poll', {'secret': secret})
+                if status == 200 and p.get('status') == 'paired':
+                    STATE.save({'token': p['token'], 'hostname': p['hostname'], 'url': p['url']})
+                    log(f"Paired. Home Assistant will be reachable at {p['url']}")
+                    STATE.wake.set()
+                    break
+                if status == 410:
+                    break
+                if status != 200:
+                    raise RuntimeError(p.get('message') or f'HTTP {status}')
+        except Exception as e:  # noqa: BLE001  network trouble: show it and try again
+            with STATE.lock:
+                STATE.error = f'Could not reach DNSalsa: {e}'
+            log(STATE.error)
+            time.sleep(30)
+
+
+# ── cloudflared ──
+def tunnel_loop():
+    proc = None
+    quick_exits = 0
+    while True:
+        saved = STATE.saved
+        if not saved:
+            if proc and proc.poll() is None:
+                proc.terminate()
+                proc.wait(10)
+            proc = None
+            STATE.wake.wait(5)
+            STATE.wake.clear()
+            continue
+        if proc is None or proc.poll() is not None:
+            if proc is not None:
+                quick_exits = quick_exits + 1 if time.time() - started < 30 else 0
+                if quick_exits >= 5:
+                    with STATE.lock:
+                        STATE.error = ('Cloudflare keeps refusing the tunnel. If you removed this hostname or its tunnel '
+                                       'in the DNSalsa dashboard, press "Pair again".')
+                    time.sleep(60)
+            env = {**os.environ, 'TUNNEL_TOKEN': saved['token']}   # not on the command line, so it stays out of ps
+            proc = subprocess.Popen([CLOUDFLARED, 'tunnel', '--no-autoupdate', '--metrics', METRICS, 'run'], env=env)
+            started = time.time()
+            log('cloudflared started')
+        try:
+            with urllib.request.urlopen(f'http://{METRICS}/ready', timeout=3) as r:
+                ok = r.status == 200
+        except Exception:  # noqa: BLE001
+            ok = False
+        with STATE.lock:
+            if ok and not STATE.connected:
+                log('Tunnel connected')
+            STATE.connected = ok
+            if ok:
+                STATE.error = None
+                quick_exits = 0
+        STATE.wake.wait(10 if ok else 3)   # check often until connected, then calmly
+        STATE.wake.clear()
+
+
+# ── Home Assistant reverse proxy setting ──
+def check_proxy():
+    """Home Assistant answers 400 to a forwarded request when 'Trust X-Forwarded-For' is off or we aren't trusted."""
+    req = urllib.request.Request(f'{HA_URL}/api/', headers={'X-Forwarded-For': '203.0.113.7'})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            code = r.status
+    except urllib.error.HTTPError as e:
+        code = e.code
+    except Exception:  # noqa: BLE001  Home Assistant restarting: unknown for now
+        code = None
+    with STATE.lock:
+        STATE.proxy_ok = None if code is None else code != 400
+    return STATE.proxy_ok
+
+
+def proxy_loop():
+    while True:
+        check_proxy()
+        time.sleep(60)
+
+
+# ── Page in the Home Assistant sidebar ──
+PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DNSalsa</title><style>
+:root{color-scheme:light dark;--bg:#fff;--fg:#1c1b1f;--muted:#5f5b66;--card:#f6f3f2;--line:#e4dedc;--brand:#c8261f;--ok:#2f8f4e;--warn:#b26a00}
+@media(prefers-color-scheme:dark){:root{--bg:#111;--fg:#f3eee9;--muted:#a59d97;--card:#1b1716;--line:#33302e;--brand:#ff6a4d;--ok:#5cc785;--warn:#f0a020}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:640px;margin:0 auto;padding:24px 16px 48px;display:grid;gap:16px}
+h1{font-size:22px;margin:0}h2{font-size:16px;margin:0 0 6px}p{margin:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;display:grid;gap:10px}
+.code{font:700 34px/1.1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.08em;color:var(--brand)}
+.muted{color:var(--muted)}.ok{color:var(--ok)}.warn{color:var(--warn)}
+a{color:var(--brand)}ol{margin:0;padding-left:20px}li{margin:3px 0}
+button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
+button.primary,a.btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+a.btn{display:inline-block;padding:8px 14px;border-radius:8px;border:1px solid var(--line);text-decoration:none;font-weight:600}
+code{font:600 14px ui-monospace,Menlo,Consolas,monospace;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:3px 7px}
+.copy{margin-top:6px}.copy button{padding:4px 10px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+</style></head><body><main>
+<h1>DNSalsa</h1>
+{body}
+</main><script>
+document.querySelectorAll('form[data-post]').forEach(f=>f.addEventListener('submit',async e=>{e.preventDefault();
+const b=f.querySelector('button');b.disabled=true;await fetch(f.dataset.post,{method:'POST'});location.reload();}));
+// Copy also works on plain http:// (no secure context), where navigator.clipboard is missing.
+document.querySelectorAll('[data-copy]').forEach(b=>b.addEventListener('click',async()=>{
+const t=document.getElementById(b.dataset.copy).textContent;let ok=false;
+try{await navigator.clipboard.writeText(t);ok=true}catch(e){}
+if(!ok){const a=document.createElement('textarea');a.value=t;document.body.append(a);a.select();
+try{ok=document.execCommand('copy')}catch(e){}a.remove()}
+b.textContent=ok?'Copied':'Select and copy';setTimeout(()=>b.textContent='Copy',2000)}));
+{refresh}
+</script></body></html>"""
+
+
+def render():
+    with STATE.lock:
+        saved, code, expires, error = STATE.saved, STATE.code, STATE.code_expires, STATE.error
+        proxy_ok, connected = STATE.proxy_ok, STATE.connected
+    server = html.escape(options()['server'])
+    parts = []
+    if error:
+        parts.append(f'<div class="card"><p class="warn">{html.escape(error)}</p></div>')
+    if not saved:
+        if code:
+            mins = max(1, int((expires - time.time()) / 60))
+            parts.append(f'''<div class="card"><h2>Connect to your DNSalsa account</h2>
+<div class="code">{html.escape(code)}</div>
+<ol><li>Open <a href="{server}/dashboard" target="_blank" rel="noopener">your DNSalsa dashboard</a>.</li>
+<li>At the hostname you want for Home Assistant, choose <b>Setup → Home Assistant</b>.</li>
+<li>Enter the code above. This page updates by itself.</li></ol>
+<p class="muted">The code works for {mins} more minute{'s' if mins != 1 else ''}; after that you get a new one here.</p></div>''')
+        else:
+            parts.append('<div class="card"><p class="muted">Getting a pairing code…</p></div>')
+    else:
+        url = html.escape(saved['url'])
+        state = ('<span class="ok"><span class="dot" style="background:var(--ok)"></span>Connected</span>' if connected
+                 else '<span class="warn"><span class="dot" style="background:var(--warn)"></span>Connecting…</span>')
+        parts.append(f'''<div class="card"><h2>Your Home Assistant address</h2>
+<p><a href="{url}" target="_blank" rel="noopener">{url}</a></p><p>{state}</p>
+<p class="muted">Use this address in the Home Assistant app on your phone: Settings → Companion app → Server → External URL.</p></div>''')
+    if proxy_ok is False:
+        parts.append('''<div class="card"><h2 class="warn">One setting needed in Home Assistant</h2>
+<p>Home Assistant blocks traffic from the tunnel until you allow it. This takes about 30 seconds:</p>
+<div class="row"><a class="btn primary" href="/config/network" target="_top">Open network settings</a></div>
+<ol><li>Scroll to <b>HTTP Server</b>, part <b>Reverse proxy</b>.</li>
+<li>Turn on <b>Trust X-Forwarded-For</b>.</li>
+<li>Add this address as a trusted proxy:
+<span class="row copy"><code id="net">172.30.33.0/24</code><button type="button" data-copy="net">Copy</button></span></li>
+<li>Save, and confirm the new settings after Home Assistant restarts.</li></ol>
+<p class="muted">Already have a proxy in that list? Add this address, keep the others. This page turns green by itself once it works.</p>
+<form class="row" data-post="check"><button>Check again</button></form></div>''')
+    elif proxy_ok:
+        parts.append('<div class="card"><p class="ok">Home Assistant accepts traffic from the tunnel.</p></div>')
+    if saved:
+        parts.append('''<div class="card"><h2>Pair again</h2><p class="muted">Use another hostname or another DNSalsa account.
+This disconnects the current address from this Home Assistant.</p>
+<form class="row" data-post="unpair"><button>Pair again</button></form></div>''')
+    refresh = '' if (saved and connected and proxy_ok) else 'setTimeout(()=>location.reload(),4000);'
+    return PAGE.replace('{body}', '\n'.join(parts)).replace('{refresh}', refresh)
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def _allowed(self):
+        if self.client_address[0] not in INGRESS_PEERS:
+            self.send_error(403)
+            return False
+        return True
+
+    def _send(self, code, body, ctype='text/html; charset=utf-8'):
+        data = body.encode()
+        self.send_response(code)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if not self._allowed():
+            return
+        if self.path.rstrip('/').endswith('status'):
+            with STATE.lock:
+                return self._send(200, json.dumps({'paired': bool(STATE.saved), 'code': STATE.code, 'connected': STATE.connected,
+                                                   'proxyOk': STATE.proxy_ok, 'error': STATE.error}), 'application/json')
+        self._send(200, render())
+
+    def do_POST(self):
+        if not self._allowed():
+            return
+        path = self.path.rstrip('/')
+        if path.endswith('check'):
+            check_proxy()
+        elif path.endswith('unpair'):
+            STATE.forget()
+            log('Unpaired; getting a new pairing code')
+            STATE.wake.set()
+        self._send(200, '{"ok":true}', 'application/json')
+
+
+def main():
+    os.makedirs(DATA, exist_ok=True)
+    for fn in (pairing_loop, tunnel_loop, proxy_loop):
+        threading.Thread(target=fn, daemon=True).start()
+    log(f'DNSalsa app running, server {options()["server"]}')
+    ThreadingHTTPServer(('0.0.0.0', INGRESS_PORT), Handler).serve_forever()
+
+
+if __name__ == '__main__':
+    main()

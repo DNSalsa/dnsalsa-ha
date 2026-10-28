@@ -1,0 +1,4 @@
+configuration:
+  server:
+    name: DNSalsa server
+    description: Leave this at https://dnsalsa.nl. Only change it if DNSalsa support asks you to.

@@ -103,6 +103,13 @@ def device_name():
     """Home Assistant version and architecture, shown in the dashboard when the user enters the code."""
     token = os.environ.get('SUPERVISOR_TOKEN')
     if not token:
+        # s6-overlay keeps the container's variables here instead of passing them on to the command
+        try:
+            with open('/run/s6/container_environment/SUPERVISOR_TOKEN') as f:
+                token = f.read().strip()
+        except OSError:
+            token = None
+    if not token:
         return 'Home Assistant'
     try:
         _, core = http_json('GET', 'http://supervisor/core/info', headers={'Authorization': f'Bearer {token}'}, timeout=5)

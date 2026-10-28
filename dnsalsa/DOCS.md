@@ -6,7 +6,7 @@ You need a DNSalsa account with the Home Assistant subscription.
 
 ## Connecting
 
-1. Start this app and open **DNSalsa** in the sidebar. It shows a code like `K7QP-4XM2`.
+1. On the app page, turn on **Start on boot**, **Watchdog** and **Show in sidebar**, and start the app. Open **DNSalsa** in the sidebar. It shows a code like `K7QP-4XM2`.
 2. In your [DNSalsa dashboard](https://dnsalsa.nl/dashboard), open the hostname you want, choose **Setup → Home Assistant** and enter the code.
 3. Within a few seconds this app shows your address and **Connected**.
 

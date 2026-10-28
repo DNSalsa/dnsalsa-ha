@@ -341,11 +341,13 @@ def render():
 <li>Turn on <b>Trust X-Forwarded-For</b>.</li>
 <li>Add this address as a trusted proxy:
 <span class="row copy"><code id="net">172.30.33.0/24</code><button type="button" data-copy="net">Copy</button></span></li>
+<li>Recommended, same section: turn on <b>Enable IP banning</b>, turn off <b>Unlimited login attempts</b> and set <b>Login attempts before ban</b> to <b>10</b>.</li>
 <li>Save, and confirm the new settings after Home Assistant restarts.</li></ol>
 <p class="muted small">Already have a proxy in that list? Add this address, keep the others. This page turns green by itself once it works.</p>
 <form class="row" data-post="check"><button>Check again</button></form></div>''')
     elif proxy_ok and saved:
-        parts.append(f'<div class="card"><div class="check">{CHECK}<p>Home Assistant accepts traffic from the tunnel.</p></div></div>')
+        parts.append(f'<div class="card"><div class="check">{CHECK}<p>Home Assistant accepts traffic from the tunnel.</p></div>
+<p class="muted small">Tip: in <a href="/config/network" target="_top">network settings</a>, turn on <b>Enable IP banning</b> with <b>Login attempts before ban</b> at 10. Bans stay until you remove them from <code>ip_bans.yaml</code>.</p></div>')
     if saved:
         parts.append('''<div class="card"><h2>Pair again</h2><p class="muted small">Use another hostname or another DNSalsa account.
 This disconnects the current address from this Home Assistant.</p>

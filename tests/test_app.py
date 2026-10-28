@@ -152,11 +152,13 @@ class Page(unittest.TestCase):
         self.assertIn('172.30.33.0/24', page)
         self.assertIn('Trust X-Forwarded-For', page)
         self.assertIn('href="/config/network"', page)
+        self.assertIn('Login attempts before ban</b> to <b>10', page)
         with main.STATE.lock:
             main.STATE.proxy_ok = True
         page = main.render()
         self.assertNotIn('172.30.33.0/24', page)
         self.assertIn('Connected', page)
+        self.assertIn('Enable IP banning', page, 'IP ban tip stays once the proxy works')
         self.assertNotIn('setTimeout(()=>location.reload()', page, 'no auto-refresh once everything works')
 
     def test_fonts_are_embedded(self):

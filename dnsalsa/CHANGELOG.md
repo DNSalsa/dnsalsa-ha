@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.5
+
+- The setup steps now suggest turning on IP banning, with a ban after 10 failed logins.
+
 ## 1.0.4
 
 - The DNSalsa dashboard shows your Home Assistant version when you enter the pairing code.

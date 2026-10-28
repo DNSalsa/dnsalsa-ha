@@ -17,7 +17,8 @@ Home Assistant only accepts traffic from the tunnel after you allow it. The app 
 1. **Settings → System → Network**, section **HTTP Server**, part **Reverse proxy**.
 2. Turn on **Trust X-Forwarded-For**.
 3. Add `172.30.33.0/24` as a trusted proxy (the app has a copy button). Already have other proxies there? Keep them.
-4. Save, and confirm the new settings after Home Assistant restarts. Without that confirmation Home Assistant puts the old settings back after 5 minutes.
+4. Recommended, same section: turn on **Enable IP banning**, turn off **Unlimited login attempts** and set **Login attempts before ban** to **10**. Home Assistant then blocks an address after 10 failed logins. Bans don't expire; remove them from `ip_bans.yaml` if you lock yourself out.
+5. Save, and confirm the new settings after Home Assistant restarts. Without that confirmation Home Assistant puts the old settings back after 5 minutes.
 
 ## Phone app
 

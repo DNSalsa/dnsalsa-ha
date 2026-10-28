@@ -5,6 +5,7 @@ hands over. Shows its state on the DNSalsa page in the Home Assistant sidebar (i
 
 Only the Python standard library: no packages to install or update.
 """
+import base64
 import html
 import json
 import os
@@ -189,8 +190,10 @@ def tunnel_loop():
 
 # ── Home Assistant reverse proxy setting ──
 def check_proxy():
-    """Home Assistant answers 400 to a forwarded request when 'Trust X-Forwarded-For' is off or we aren't trusted."""
-    req = urllib.request.Request(f'{HA_URL}/api/', headers={'X-Forwarded-For': '203.0.113.7'})
+    """Home Assistant answers 400 to a forwarded request when 'Trust X-Forwarded-For' is off or we aren't trusted.
+    /manifest.json needs no login, so this check never shows up as a failed login in Home Assistant.
+    203.0.113.7 is a documentation address (TEST-NET-3) that no real visitor has."""
+    req = urllib.request.Request(f'{HA_URL}/manifest.json', headers={'X-Forwarded-For': '203.0.113.7'})
     try:
         with urllib.request.urlopen(req, timeout=5) as r:
             code = r.status
@@ -210,26 +213,70 @@ def proxy_loop():
 
 
 # ── Page in the Home Assistant sidebar ──
+FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts')
+
+
+def _font(name):
+    try:
+        with open(os.path.join(FONT_DIR, name), 'rb') as f:
+            return 'data:font/woff2;base64,' + base64.b64encode(f.read()).decode()
+    except OSError:
+        return ''
+
+
+FLAME = ('<svg class="flame" viewBox="0 0 52 70" aria-hidden="true"><defs><linearGradient id="fl" x1="0" y1="70" x2="52" y2="0" '
+         'gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#b3122a"/><stop offset=".5" stop-color="#d9401c"/>'
+         '<stop offset="1" stop-color="#f0782a"/></linearGradient></defs>'
+         '<path d="M26 68 C10 68 4 54 4 42 C4 28 14 22 18 10 C20 4 22 0 26 0 C26 8 30 12 34 16 C38 20 48 28 48 42 C48 56 42 68 26 68Z" fill="url(#fl)"/>'
+         '<path d="M26 60 C18 60 14 52 14 44 C14 36 20 32 22 26 C24 34 30 36 34 44 C34 52 32 60 26 60Z" fill="#fff" fill-opacity=".14"/></svg>')
+
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DNSalsa</title><style>
-:root{color-scheme:light dark;--bg:#fff;--fg:#1c1b1f;--muted:#5f5b66;--card:#f6f3f2;--line:#e4dedc;--brand:#c8261f;--ok:#2f8f4e;--warn:#b26a00}
-@media(prefers-color-scheme:dark){:root{--bg:#111;--fg:#f3eee9;--muted:#a59d97;--card:#1b1716;--line:#33302e;--brand:#ff6a4d;--ok:#5cc785;--warn:#f0a020}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-main{max-width:640px;margin:0 auto;padding:24px 16px 48px;display:grid;gap:16px}
-h1{font-size:22px;margin:0}h2{font-size:16px;margin:0 0 6px}p{margin:0}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;display:grid;gap:10px}
-.code{font:700 34px/1.1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.08em;color:var(--brand)}
-.muted{color:var(--muted)}.ok{color:var(--ok)}.warn{color:var(--warn)}
-a{color:var(--brand)}ol{margin:0;padding-left:20px}li{margin:3px 0}
-button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
-button.primary,a.btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
-a.btn{display:inline-block;padding:8px 14px;border-radius:8px;border:1px solid var(--line);text-decoration:none;font-weight:600}
-code{font:600 14px ui-monospace,Menlo,Consolas,monospace;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:3px 7px}
-.copy{margin-top:6px}.copy button{padding:4px 10px}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+@font-face{font-family:'Space Grotesk';src:url(__SANS__) format('woff2');font-weight:300 700;font-display:swap}
+@font-face{font-family:'Space Mono';src:url(__MONO__) format('woff2');font-weight:700;font-display:swap}
+:root{color-scheme:dark;--red:oklch(48% .23 22);--orange:oklch(63% .22 42);--heat:oklch(72% .2 55);
+--bg:oklch(11% .015 22);--card:oklch(15% .018 22);--card2:oklch(18% .02 22);--line:oklch(24% .015 22);
+--muted:oklch(66% .012 55);--fg:oklch(96% .008 55);--ok:oklch(74% .16 150);
+--flame:linear-gradient(120deg,var(--red),var(--orange) 55%,var(--heat));
+--sans:'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--mono:'Space Mono',ui-monospace,Menlo,Consolas,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.6 var(--sans);-webkit-font-smoothing:antialiased;min-height:100vh;
+background-image:radial-gradient(60rem 30rem at 50% -12rem,oklch(48% .23 22 / .22),transparent 70%)}
+main{max-width:620px;margin:0 auto;padding:28px 16px 40px;display:grid;gap:14px}
+header{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.flame{width:26px;height:35px;flex:none;filter:drop-shadow(0 0 12px oklch(63% .22 42 / .45))}
+.brand{font-weight:600;font-size:22px;letter-spacing:-.01em}.brand span{color:var(--orange)}
+.pill{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:500;padding:5px 11px;border-radius:99px;
+border:1px solid var(--line);background:var(--card);color:var(--muted);white-space:nowrap}
+.pill i{width:8px;height:8px;border-radius:50%;background:currentColor}
+.pill.ok{color:var(--ok);border-color:oklch(74% .16 150 / .35)}.pill.ok i{box-shadow:0 0 10px currentColor}
+.pill.wait{color:var(--heat);border-color:oklch(72% .2 55 / .35)}.pill.wait i{animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.3}}
+@media(prefers-reduced-motion:reduce){.pill.wait i{animation:none}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;display:grid;gap:12px}
+.card.hero{background:linear-gradient(var(--card2),var(--card)) padding-box,var(--flame) border-box;border:1px solid transparent}
+.card.warn{border-left:3px solid var(--heat)}
+.label{font:700 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+h2{font-size:17px;font-weight:600;letter-spacing:-.01em}h2.warn{color:var(--heat)}
+.code{font:700 clamp(34px,10vw,48px)/1.05 var(--mono);letter-spacing:.06em;background:var(--flame);-webkit-background-clip:text;background-clip:text;color:transparent}
+.addr{font-size:clamp(18px,5vw,22px);font-weight:600;word-break:break-all}
+a{color:var(--orange);text-underline-offset:3px}a:hover{color:var(--heat)}
+.muted{color:var(--muted)}.small{font-size:13px}.ok{color:var(--ok)}
+ol{padding-left:22px;display:grid;gap:6px}li::marker{color:var(--orange);font-weight:600}
+button,a.btn{font:500 14px var(--sans);padding:9px 16px;border-radius:9px;border:1px solid var(--line);background:var(--card2);color:var(--fg);
+cursor:pointer;text-decoration:none;display:inline-block}
+button:hover,a.btn:hover{border-color:var(--muted);color:var(--fg)}
+.primary{background:var(--flame)!important;border-color:transparent!important;color:#fff!important;font-weight:600!important}
+.primary:hover{filter:brightness(1.1)}
+button:disabled{opacity:.5;cursor:wait}
+code{font:700 14px var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:4px 8px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.copy{margin-top:6px}.copy button{padding:5px 11px;font-size:13px}
+.check{display:flex;gap:10px;align-items:center}.check svg{flex:none;color:var(--ok)}
+footer{margin-top:6px;text-align:center;font-size:12px;color:var(--muted)}footer a{color:var(--muted)}
 </style></head><body><main>
-<h1>DNSalsa</h1>
-{body}
+<header>__FLAME__<div class="brand">DNS<span>alsa</span></div>__PILL__</header>
+__BODY__
+<footer><a href="https://dnsalsa.nl" target="_blank" rel="noopener">dnsalsa.nl</a> · <a href="mailto:info@dnsalsa.nl">info@dnsalsa.nl</a></footer>
 </main><script>
 document.querySelectorAll('form[data-post]').forEach(f=>f.addEventListener('submit',async e=>{e.preventDefault();
 const b=f.querySelector('button');b.disabled=true;await fetch(f.dataset.post,{method:'POST'});location.reload();}));
@@ -240,8 +287,12 @@ try{await navigator.clipboard.writeText(t);ok=true}catch(e){}
 if(!ok){const a=document.createElement('textarea');a.value=t;document.body.append(a);a.select();
 try{ok=document.execCommand('copy')}catch(e){}a.remove()}
 b.textContent=ok?'Copied':'Select and copy';setTimeout(()=>b.textContent='Copy',2000)}));
-{refresh}
+__REFRESH__
 </script></body></html>"""
+PAGE = PAGE.replace('__SANS__', _font('space-grotesk-latin-wght-normal.woff2')).replace('__MONO__', _font('space-mono-latin-700-normal.woff2')).replace('__FLAME__', FLAME)
+
+CHECK = ('<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" '
+         'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>')
 
 
 def render():
@@ -250,28 +301,32 @@ def render():
         proxy_ok, connected = STATE.proxy_ok, STATE.connected
     server = html.escape(options()['server'])
     parts = []
+    if not saved:
+        pill = '<span class="pill"><i></i>Not paired</span>'
+    elif connected:
+        pill = '<span class="pill ok"><i></i>Connected</span>'
+    else:
+        pill = '<span class="pill wait"><i></i>Connecting</span>'
     if error:
-        parts.append(f'<div class="card"><p class="warn">{html.escape(error)}</p></div>')
+        parts.append(f'<div class="card warn"><p>{html.escape(error)}</p></div>')
     if not saved:
         if code:
             mins = max(1, int((expires - time.time()) / 60))
-            parts.append(f'''<div class="card"><h2>Connect to your DNSalsa account</h2>
+            parts.append(f'''<div class="card hero"><div class="label">Pairing code</div>
 <div class="code">{html.escape(code)}</div>
 <ol><li>Open <a href="{server}/dashboard" target="_blank" rel="noopener">your DNSalsa dashboard</a>.</li>
 <li>At the hostname you want for Home Assistant, choose <b>Setup → Home Assistant</b>.</li>
 <li>Enter the code above. This page updates by itself.</li></ol>
-<p class="muted">The code works for {mins} more minute{'s' if mins != 1 else ''}; after that you get a new one here.</p></div>''')
+<p class="muted small">The code works for {mins} more minute{'s' if mins != 1 else ''}; after that you get a new one here.</p></div>''')
         else:
             parts.append('<div class="card"><p class="muted">Getting a pairing code…</p></div>')
     else:
         url = html.escape(saved['url'])
-        state = ('<span class="ok"><span class="dot" style="background:var(--ok)"></span>Connected</span>' if connected
-                 else '<span class="warn"><span class="dot" style="background:var(--warn)"></span>Connecting…</span>')
-        parts.append(f'''<div class="card"><h2>Your Home Assistant address</h2>
-<p><a href="{url}" target="_blank" rel="noopener">{url}</a></p><p>{state}</p>
-<p class="muted">Use this address in the Home Assistant app on your phone: Settings → Companion app → Server → External URL.</p></div>''')
+        parts.append(f'''<div class="card hero"><div class="label">Your Home Assistant address</div>
+<a class="addr" href="{url}" target="_blank" rel="noopener">{url}</a>
+<p class="muted small">In the Home Assistant app on your phone: Settings → Companion app → Server → External URL.</p></div>''')
     if proxy_ok is False:
-        parts.append('''<div class="card"><h2 class="warn">One setting needed in Home Assistant</h2>
+        parts.append('''<div class="card warn"><h2 class="warn">One setting needed in Home Assistant</h2>
 <p>Home Assistant blocks traffic from the tunnel until you allow it. This takes about 30 seconds:</p>
 <div class="row"><a class="btn primary" href="/config/network" target="_top">Open network settings</a></div>
 <ol><li>Scroll to <b>HTTP Server</b>, part <b>Reverse proxy</b>.</li>
@@ -279,16 +334,16 @@ def render():
 <li>Add this address as a trusted proxy:
 <span class="row copy"><code id="net">172.30.33.0/24</code><button type="button" data-copy="net">Copy</button></span></li>
 <li>Save, and confirm the new settings after Home Assistant restarts.</li></ol>
-<p class="muted">Already have a proxy in that list? Add this address, keep the others. This page turns green by itself once it works.</p>
+<p class="muted small">Already have a proxy in that list? Add this address, keep the others. This page turns green by itself once it works.</p>
 <form class="row" data-post="check"><button>Check again</button></form></div>''')
-    elif proxy_ok:
-        parts.append('<div class="card"><p class="ok">Home Assistant accepts traffic from the tunnel.</p></div>')
+    elif proxy_ok and saved:
+        parts.append(f'<div class="card"><div class="check">{CHECK}<p>Home Assistant accepts traffic from the tunnel.</p></div></div>')
     if saved:
-        parts.append('''<div class="card"><h2>Pair again</h2><p class="muted">Use another hostname or another DNSalsa account.
+        parts.append('''<div class="card"><h2>Pair again</h2><p class="muted small">Use another hostname or another DNSalsa account.
 This disconnects the current address from this Home Assistant.</p>
 <form class="row" data-post="unpair"><button>Pair again</button></form></div>''')
     refresh = '' if (saved and connected and proxy_ok) else 'setTimeout(()=>location.reload(),4000);'
-    return PAGE.replace('{body}', '\n'.join(parts)).replace('{refresh}', refresh)
+    return PAGE.replace('__PILL__', pill).replace('__BODY__', '\n'.join(parts)).replace('__REFRESH__', refresh)
 
 
 class Handler(BaseHTTPRequestHandler):

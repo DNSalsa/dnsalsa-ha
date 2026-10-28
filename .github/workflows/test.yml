@@ -35,9 +35,8 @@ jobs:
       - name: The app starts and answers on its ingress port
         run: |
           # point it at nothing, so CI never asks the real dnsalsa.nl for pairing codes
-          docker run -d --name app -e DNSALSA_DATA=/tmp -e DNSALSA_HA_URL=http://127.0.0.1:9 dnsalsa-ha:test \
-            sh -c 'echo "{\"server\": \"http://127.0.0.1:9\"}" > /tmp/options.json && exec python3 -u /app/main.py'
+          docker run -d --name app -e DNSALSA_DATA=/tmp -e DNSALSA_HA_URL=http://127.0.0.1:9 -e DNSALSA_SERVER=http://127.0.0.1:9 dnsalsa-ha:test
           for i in $(seq 1 20); do docker exec app python3 -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8099/status',timeout=2)" && break; sleep 1; done
-          docker exec app python3 -c "import urllib.request,json;print(json.load(urllib.request.urlopen('http://127.0.0.1:8099/status',timeout=2)))"
+          docker exec app python3 -c "import urllib.request,json;s=json.load(urllib.request.urlopen('http://127.0.0.1:8099/status',timeout=2));print(s);assert s['code'] is None and 'Could not reach' in (s['error'] or '')"
           docker logs app | tail -5
           docker rm -f app

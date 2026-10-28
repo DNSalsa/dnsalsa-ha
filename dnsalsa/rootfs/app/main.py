@@ -36,7 +36,8 @@ def options():
             o = json.load(f)
     except (OSError, ValueError):
         o = {}
-    return {'server': (o.get('server') or 'https://dnsalsa.nl').rstrip('/')}
+    # DNSALSA_SERVER: for tests and local development only; in Home Assistant the option decides.
+    return {'server': (os.environ.get('DNSALSA_SERVER') or o.get('server') or 'https://dnsalsa.nl').rstrip('/')}
 
 
 class State:

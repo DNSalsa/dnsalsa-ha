@@ -18,3 +18,7 @@ This folder is published on its own as a public git repository (Home Assistant n
 - **New cloudflared:** change `CLOUDFLARED_VERSION` in `build.yaml` and both SHA-256 checksums in the `Dockerfile` (`sha256sum` of the downloaded `cloudflared-linux-amd64` and `-arm64` files).
 - **Base image:** pinned in `build.yaml`; raise it now and then.
 - **Test without Home Assistant:** `DNSALSA_DATA=/tmp/d DNSALSA_HA_URL=http://127.0.0.1:8123 python3 dnsalsa/rootfs/app/main.py`, with `{"server":"https://staging.dnsalsa.nl"}` in `/tmp/d/options.json`, and open http://127.0.0.1:8099.
+
+## Fonts
+
+The sidebar page uses Space Grotesk and Space Mono (`dnsalsa/rootfs/app/fonts/`), both under the SIL Open Font License 1.1.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3
+
+- The reverse proxy check no longer shows up in Home Assistant as a failed login from 203.0.113.7.
+- New look for the DNSalsa page in the sidebar.
+
 ## 1.0.2
 
 - Watchdog support: turn on **Watchdog** on the app page and Home Assistant restarts the app if it stops responding.

@@ -1,5 +1,5 @@
 name: DNSalsa
-version: "1.0.2"
+version: "1.0.3"
 slug: dnsalsa
 description: Reach your Home Assistant from anywhere with your own dnsalsa.nl address. No port forwarding, no router settings.
 url: https://dnsalsa.nl

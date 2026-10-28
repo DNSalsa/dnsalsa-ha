@@ -5,7 +5,7 @@ ARG BUILD_ARCH
 ARG CLOUDFLARED_VERSION
 
 # cloudflared from Cloudflare's GitHub releases, checked against a pinned checksum.
-# To update: change CLOUDFLARED_VERSION in build.yaml and both checksums below.
+# Updated by .github/workflows/cloudflared.yml (a pull request every time Cloudflare releases a new version).
 RUN apk add --no-cache python3 \
  && case "${BUILD_ARCH}" in \
       amd64)   ARCH=amd64; SUM=e1bc0cf084fd9e590554fe769a86b1db46701c3f847a43d902f7b974a4e16298 ;; \

@@ -238,7 +238,32 @@ class Page(unittest.TestCase):
         self.assertNotIn('172.30.33.0/24', page)
         self.assertIn('Connected', page)
         self.assertIn('Enable IP banning', page, 'IP ban tip stays once the proxy works')
+        self.assertIn('data-post="hide-ban-tip"', page)
         self.assertNotIn('setTimeout(()=>location.reload()', page, 'no auto-refresh once everything works')
+
+    def test_ban_tip_can_be_hidden_for_good(self):
+        try:
+            os.remove(main.PREFS_FILE)
+        except OSError:
+            pass
+        with main.STATE.lock:
+            main.STATE.saved = {'token': 't', 'hostname': 'jansen.dnsalsa.nl', 'url': 'https://jansen.dnsalsa.nl'}
+            main.STATE.connected, main.STATE.proxy_ok = True, True
+        self.assertIn('Enable IP banning', main.render())
+        url, srv = serve(main.Handler)
+        try:
+            import urllib.request
+            urllib.request.urlopen(urllib.request.Request(f'{url}/hide-ban-tip', method='POST'), timeout=5).read()
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        self.assertNotIn('Enable IP banning', main.render())
+        main.STATE.forget()   # "Pair again" keeps the choice
+        with main.STATE.lock:
+            main.STATE.saved = {'token': 't', 'hostname': 'jansen.dnsalsa.nl', 'url': 'https://jansen.dnsalsa.nl'}
+            main.STATE.proxy_ok = False
+        self.assertNotIn('Enable IP banning', main.render(), 'not in the setup steps either')
+        os.remove(main.PREFS_FILE)
 
     def test_fonts_are_embedded(self):
         self.assertIn('data:font/woff2;base64,', main.PAGE, 'the page has no external requests')

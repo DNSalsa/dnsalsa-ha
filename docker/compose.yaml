@@ -1,11 +1,10 @@
 # DNSalsa for Home Assistant Container or Core.
 # Save this file as compose.yaml in an empty folder and run: docker compose up -d
-# Update: docker compose up -d --build
+# Update: docker compose pull && docker compose up -d
 services:
   dnsalsa:
-    build:
-      context: https://github.com/DNSalsa/dnsalsa-ha.git#main
-      dockerfile: docker/Dockerfile
+    # Tags follow the Home Assistant app: latest, a minor (1.0) or an exact version (1.0.6).
+    image: ghcr.io/dnsalsa/dnsalsa-ha:latest
     container_name: dnsalsa
     restart: unless-stopped
     environment:

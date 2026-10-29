@@ -1,5 +1,6 @@
 # DNSalsa as a plain Docker container, for Home Assistant Container or Core (no apps/add-ons).
-# Same code as the Home Assistant app. Build straight from GitHub, no registry:
+# Same code as the Home Assistant app. Published as ghcr.io/dnsalsa/dnsalsa-ha by .github/workflows/publish.yml.
+# Or build it yourself straight from GitHub:
 #   docker build -t dnsalsa -f docker/Dockerfile https://github.com/DNSalsa/dnsalsa-ha.git#main
 FROM alpine:3.23
 

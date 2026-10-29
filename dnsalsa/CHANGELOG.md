@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.6
+
+- No apps in your Home Assistant? DNSalsa now also runs as a Docker container: `ghcr.io/dnsalsa/dnsalsa-ha`.
+
 ## 1.0.5
 
 - The setup steps now suggest turning on IP banning, with a ban after 10 failed logins.

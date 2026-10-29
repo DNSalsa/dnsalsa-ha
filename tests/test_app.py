@@ -233,6 +233,8 @@ class Release(unittest.TestCase):
         compose = self.read('docker', 'compose.yaml')
         net = re.search(r'DNSALSA_TRUSTED_PROXY: (\S+)', compose).group(1)
         self.assertIn(f'subnet: {net}', compose, 'the trusted proxy shown to the user is the compose network')
+        self.assertIn('image: ghcr.io/dnsalsa/dnsalsa-ha:latest', compose)
+        self.assertIn('IMAGE: ghcr.io/dnsalsa/dnsalsa-ha', self.read('.github', 'workflows', 'publish.yml'))
 
     def test_ingress_port_matches(self):
         cfg = self.read('dnsalsa', 'config.yaml')

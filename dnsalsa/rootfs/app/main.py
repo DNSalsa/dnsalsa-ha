@@ -24,6 +24,10 @@ INGRESS_PORT = int(os.environ.get('DNSALSA_PORT', '8099'))
 CLOUDFLARED = os.environ.get('DNSALSA_CLOUDFLARED', '/usr/local/bin/cloudflared')
 METRICS = '127.0.0.1:20241'
 INGRESS_PEERS = {'172.30.32.2', '127.0.0.1'}  # Home Assistant's ingress proxy (and local tests)
+# Standalone Docker container (Home Assistant Container or Core): no ingress, the page is on a published port.
+STANDALONE = os.environ.get('DNSALSA_STANDALONE') == '1'
+# Address Home Assistant sees the tunnel traffic come from; the setup steps tell the user to trust it.
+TRUSTED_PROXY = os.environ.get('DNSALSA_TRUSTED_PROXY') or '172.30.33.0/24'
 
 
 def log(msg):
@@ -110,7 +114,7 @@ def device_name():
         except OSError:
             token = None
     if not token:
-        return 'Home Assistant'
+        return 'Home Assistant (Docker)' if STANDALONE else 'Home Assistant'
     try:
         _, core = http_json('GET', 'http://supervisor/core/info', headers={'Authorization': f'Bearer {token}'}, timeout=5)
         d = core.get('data', {})
@@ -333,21 +337,28 @@ def render():
         parts.append(f'''<div class="card hero"><div class="label">Your Home Assistant address</div>
 <a class="addr" href="{url}" target="_blank" rel="noopener">{url}</a>
 <p class="muted small">In the Home Assistant app on your phone: Settings → Companion app → Server → External URL.</p></div>''')
+    if STANDALONE:
+        settings = '<b>Settings → System → Network</b>'
+        open_btn = f'<p>In Home Assistant, open {settings}.</p>'
+    else:
+        settings = '<a href="/config/network" target="_top">network settings</a>'
+        open_btn = '<div class="row"><a class="btn primary" href="/config/network" target="_top">Open network settings</a></div>'
+    net = html.escape(TRUSTED_PROXY)
     if proxy_ok is False:
-        parts.append('''<div class="card warn"><h2 class="warn">One setting needed in Home Assistant</h2>
+        parts.append(f'''<div class="card warn"><h2 class="warn">One setting needed in Home Assistant</h2>
 <p>Home Assistant blocks traffic from the tunnel until you allow it. This takes about 30 seconds:</p>
-<div class="row"><a class="btn primary" href="/config/network" target="_top">Open network settings</a></div>
+{open_btn}
 <ol><li>Scroll to <b>HTTP Server</b>, part <b>Reverse proxy</b>.</li>
 <li>Turn on <b>Trust X-Forwarded-For</b>.</li>
 <li>Add this address as a trusted proxy:
-<span class="row copy"><code id="net">172.30.33.0/24</code><button type="button" data-copy="net">Copy</button></span></li>
+<span class="row copy"><code id="net">{net}</code><button type="button" data-copy="net">Copy</button></span></li>
 <li>Recommended, same section: turn on <b>Enable IP banning</b>, turn off <b>Unlimited login attempts</b> and set <b>Login attempts before ban</b> to <b>10</b>.</li>
 <li>Save, and confirm the new settings after Home Assistant restarts.</li></ol>
 <p class="muted small">Already have a proxy in that list? Add this address, keep the others. This page turns green by itself once it works.</p>
 <form class="row" data-post="check"><button>Check again</button></form></div>''')
     elif proxy_ok and saved:
         parts.append(f'''<div class="card"><div class="check">{CHECK}<p>Home Assistant accepts traffic from the tunnel.</p></div>
-<p class="muted small">Tip: in <a href="/config/network" target="_top">network settings</a>, turn on <b>Enable IP banning</b> with <b>Login attempts before ban</b> at 10. Bans stay until you remove them from <code>ip_bans.yaml</code>.</p></div>''')
+<p class="muted small">Tip: in {settings}, turn on <b>Enable IP banning</b> with <b>Login attempts before ban</b> at 10. Bans stay until you remove them from <code>ip_bans.yaml</code>.</p></div>''')
     if saved:
         parts.append('''<div class="card"><h2>Pair again</h2><p class="muted small">Use another hostname or another DNSalsa account.
 This disconnects the current address from this Home Assistant.</p>
@@ -361,7 +372,8 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _allowed(self):
-        if self.client_address[0] not in INGRESS_PEERS:
+        # Standalone: Docker's port mapping decides who reaches the page (the compose file binds 127.0.0.1).
+        if not STANDALONE and self.client_address[0] not in INGRESS_PEERS:
             self.send_error(403)
             return False
         return True

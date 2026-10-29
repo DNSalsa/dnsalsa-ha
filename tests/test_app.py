@@ -174,6 +174,34 @@ class Ingress(unittest.TestCase):
         stub.client_address = ('172.30.32.2', 1234)
         self.assertTrue(main.Handler._allowed(stub))
 
+    def test_standalone_page_open_on_its_published_port(self):
+        stub = types.SimpleNamespace(client_address=('192.168.1.50', 1234), send_error=lambda code: None)
+        main.STANDALONE = True
+        try:
+            self.assertTrue(main.Handler._allowed(stub))
+        finally:
+            main.STANDALONE = False
+
+
+class Standalone(unittest.TestCase):
+    def setUp(self):
+        main.STANDALONE, main.TRUSTED_PROXY = True, '172.30.57.0/24'
+        with main.STATE.lock:
+            main.STATE.saved = {'token': 't', 'hostname': 'jansen.dnsalsa.nl', 'url': 'https://jansen.dnsalsa.nl'}
+            main.STATE.connected, main.STATE.proxy_ok, main.STATE.error = True, False, None
+
+    def tearDown(self):
+        main.STANDALONE, main.TRUSTED_PROXY = False, '172.30.33.0/24'
+        with main.STATE.lock:
+            main.STATE.saved = None
+
+    def test_steps_name_the_docker_network_and_no_ingress_link(self):
+        page = main.render()
+        self.assertIn('172.30.57.0/24', page)
+        self.assertNotIn('172.30.33.0/24', page)
+        self.assertNotIn('href="/config/network"', page, 'no Home Assistant around this page to link into')
+        self.assertIn('Settings → System → Network', page)
+
 
 class Release(unittest.TestCase):
     """Checks that keep a release consistent; the cloudflared workflow relies on these formats."""
@@ -193,6 +221,18 @@ class Release(unittest.TestCase):
         self.assertRegex(dockerfile, r'amd64\)   ARCH=amd64; SUM=[0-9a-f]{64} ;;')
         self.assertRegex(dockerfile, r'aarch64\) ARCH=arm64; SUM=[0-9a-f]{64} ;;')
         self.assertIn('sha256sum -c', dockerfile)
+
+    def test_standalone_dockerfile_matches_the_app(self):
+        version = re.search(r'(?m)^  CLOUDFLARED_VERSION: (\S+)$', self.read('dnsalsa', 'build.yaml')).group(1)
+        app, docker = self.read('dnsalsa', 'Dockerfile'), self.read('docker', 'Dockerfile')
+        self.assertIn(f'ARG CLOUDFLARED_VERSION={version}\n', docker)
+        for arch in ('amd64', 'arm64'):
+            sums = [re.search(rf'ARCH={arch}; SUM=([0-9a-f]{{64}})', d).group(1) for d in (app, docker)]
+            self.assertEqual(sums[0], sums[1], f'{arch} checksum differs between the two Dockerfiles')
+        self.assertIn('sha256sum -c', docker)
+        compose = self.read('docker', 'compose.yaml')
+        net = re.search(r'DNSALSA_TRUSTED_PROXY: (\S+)', compose).group(1)
+        self.assertIn(f'subnet: {net}', compose, 'the trusted proxy shown to the user is the compose network')
 
     def test_ingress_port_matches(self):
         cfg = self.read('dnsalsa', 'config.yaml')

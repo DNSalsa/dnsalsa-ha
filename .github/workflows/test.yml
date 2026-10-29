@@ -42,3 +42,21 @@ jobs:
           docker exec app python3 -c "import urllib.request,json;s=json.load(urllib.request.urlopen('http://127.0.0.1:8099/status',timeout=2));print(s);assert s['code'] is None and 'Could not reach' in (s['error'] or '')"
           docker logs app | tail -5
           docker rm -f app
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the standalone container (amd64)
+        run: docker build -f docker/Dockerfile -t dnsalsa-docker:test .
+      - name: cloudflared runs
+        run: docker run --rm --entrypoint /usr/local/bin/cloudflared dnsalsa-docker:test --version
+      - name: The page answers on the published port, as a non-root user
+        run: |
+          docker run -d --name app -p 127.0.0.1:8099:8099 -e DNSALSA_SERVER=http://127.0.0.1:9 dnsalsa-docker:test
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:8099/status && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8099/status | python3 -c "import json,sys;s=json.load(sys.stdin);print(s);assert s['code'] is None and 'Could not reach' in (s['error'] or '')"
+          test "$(docker exec app id -u)" = 1000
+          docker logs app | tail -5
+          docker rm -f app

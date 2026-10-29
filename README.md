@@ -10,14 +10,32 @@ Or add `https://github.com/DNSalsa/dnsalsa-ha` yourself under **Settings → App
 |---|---|
 | [DNSalsa](dnsalsa/) | Your Home Assistant at your own dnsalsa.nl address, through a Cloudflare Tunnel |
 
+## Docker (Home Assistant Container or Core)
+
+No apps in your Home Assistant? Run DNSalsa as a container next to it. Docker builds it straight from this repository.
+
+1. Save [`docker/compose.yaml`](docker/compose.yaml) in an empty folder.
+2. Home Assistant on another machine? Change `homeassistant:host-gateway` to its IP (for example `homeassistant:192.168.1.20`) and `DNSALSA_TRUSTED_PROXY` to the IP of the machine running this container.
+3. `docker compose up -d`
+4. Open http://127.0.0.1:8099 on that machine, or run `docker logs dnsalsa`, for the pairing code. Enter it in your DNSalsa dashboard: hostname → **Setup → Home Assistant**.
+5. The page shows the reverse proxy setting Home Assistant needs, with the address to trust. In `configuration.yaml` that is:
+   ```yaml
+   http:
+     use_x_forwarded_for: true
+     trusted_proxies:
+       - 172.30.57.0/24
+   ```
+
+Update with `docker compose up -d --build`. Without Compose: `docker build -t dnsalsa -f docker/Dockerfile https://github.com/DNSalsa/dnsalsa-ha.git#main`.
+
 ## For the maintainer
 
 This folder is published on its own as a public git repository (Home Assistant needs `repository.yaml` at the root). Home Assistant builds the app on the user's device from the `Dockerfile`; there is no image registry to maintain.
 
 - **New version:** raise `version` in `dnsalsa/config.yaml` and add a line to `CHANGELOG.md`. Home Assistant offers the update to users.
-- **New cloudflared:** automatic. Every Monday `.github/workflows/cloudflared.yml` checks for a new release and opens a pull request with the new version, both SHA-256 checksums (checked against Cloudflare's release notes) and a new app version. Merge it to release. Run it by hand under *Actions → cloudflared update → Run workflow*.
+- **New cloudflared:** automatic. Every Monday `.github/workflows/cloudflared.yml` checks for a new release and opens a pull request with the new version, both SHA-256 checksums (checked against Cloudflare's release notes) in `dnsalsa/Dockerfile` and `docker/Dockerfile`, and a new app version. Merge it to release. Run it by hand under *Actions → cloudflared update → Run workflow*.
 - **Base image:** pinned in `build.yaml`; raise it now and then.
-- **Tests:** `python3 -m unittest discover -s tests` (standard library only). GitHub Actions runs them on every push and pull request, and builds the image for amd64 to check that cloudflared downloads and matches its checksum. The cloudflared workflow does the same build before it opens its pull request.
+- **Tests:** `python3 -m unittest discover -s tests` (standard library only). GitHub Actions runs them on every push and pull request, and builds both images (app and standalone container) for amd64 to check that cloudflared downloads and matches its checksum. The cloudflared workflow does the same build before it opens its pull request.
 - **Test without Home Assistant:** `DNSALSA_DATA=/tmp/d DNSALSA_HA_URL=http://127.0.0.1:8123 python3 dnsalsa/rootfs/app/main.py`, with `{"server":"https://staging.dnsalsa.nl"}` in `/tmp/d/options.json`, and open http://127.0.0.1:8099.
 
 ## Fonts

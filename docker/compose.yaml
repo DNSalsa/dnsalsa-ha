@@ -1,0 +1,38 @@
+# DNSalsa for Home Assistant Container or Core.
+# Save this file as compose.yaml in an empty folder and run: docker compose up -d
+# Update: docker compose up -d --build
+services:
+  dnsalsa:
+    build:
+      context: https://github.com/DNSalsa/dnsalsa-ha.git#main
+      dockerfile: docker/Dockerfile
+    container_name: dnsalsa
+    restart: unless-stopped
+    environment:
+      # Home Assistant sees tunnel traffic coming from this network; the page tells you to trust it.
+      # Home Assistant on another machine? Use the LAN IP of this Docker host instead, e.g. 192.168.1.10.
+      DNSALSA_TRUSTED_PROXY: 172.30.57.0/24
+    extra_hosts:
+      # Where Home Assistant runs. host-gateway = this machine (Home Assistant with network_mode: host).
+      # On another machine: - homeassistant:192.168.1.20
+      - homeassistant:host-gateway
+    ports:
+      # The DNSalsa page with the pairing code. Only reachable from this machine; for a headless
+      # server, use `docker logs dnsalsa` to see the code, or remove 127.0.0.1: (then anyone on your
+      # network can open the page).
+      - 127.0.0.1:8099:8099
+    volumes:
+      - dnsalsa:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [dnsalsa]
+
+volumes:
+  dnsalsa:
+
+networks:
+  dnsalsa:
+    ipam:
+      config:
+        - subnet: 172.30.57.0/24

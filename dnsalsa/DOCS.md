@@ -29,3 +29,29 @@ In the Home Assistant Companion app: **Settings → Companion app → Server →
 - **Code expired:** the app shows a new one by itself.
 - **Use another hostname or account:** press **Pair again** in the app.
 - Questions: info@dnsalsa.nl
+
+## Sensors
+
+The app adds three entities to Home Assistant:
+
+| Entity | Shows |
+|---|---|
+| `binary_sensor.dnsalsa_remote_access` | On when your address reaches Home Assistant through the tunnel |
+| `sensor.dnsalsa_address` | Your Home Assistant address, for example `https://jansen.dnsalsa.nl` |
+| `sensor.dnsalsa_traffic_this_month` | Tunnel traffic this month in GB, with the fair use limit as an attribute |
+
+Example: a notification when remote access is down for 5 minutes.
+
+```yaml
+automation:
+  - alias: DNSalsa remote access down
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.dnsalsa_remote_access
+        to: "off"
+        for: "00:05:00"
+    actions:
+      - action: notify.notify
+        data:
+          message: Home Assistant can't be reached from outside right now.
+```

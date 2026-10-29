@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.0
+
+- Three sensors in Home Assistant: `binary_sensor.dnsalsa_remote_access` (on when your address really reaches Home Assistant), `sensor.dnsalsa_address` and `sensor.dnsalsa_traffic_this_month` (in GB, with the fair use limit as an attribute). Use them in automations, for example a notification when remote access goes down.
+
 ## 1.1.1
 
 - The IP banning tip has a "Done, hide this" button. Once pressed, it stays hidden, also after pairing again.

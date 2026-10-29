@@ -1,5 +1,5 @@
 name: DNSalsa
-version: "1.1.1"
+version: "1.2.0"
 slug: dnsalsa
 description: Reach your Home Assistant from anywhere with your own dnsalsa.nl address. No port forwarding, no router settings.
 url: https://dnsalsa.nl
@@ -15,6 +15,7 @@ watchdog: tcp://[HOST]:[PORT:8099]   # Supervisor restarts the app if its web se
 panel_icon: mdi:chili-hot
 panel_title: DNSalsa
 hassio_api: true
+homeassistant_api: true   # to show the DNSalsa sensors in Home Assistant
 options:
   server: https://dnsalsa.nl
 schema:

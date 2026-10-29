@@ -205,6 +205,49 @@ class WhereHomeAssistantListens(unittest.TestCase):
             srv.server_close()
 
 
+class Sensors(unittest.TestCase):
+    def tearDown(self):
+        main.STATE.forget()
+        with main.STATE.lock:
+            main.STATE.public_ok = main.STATE.ha_reachable = main.STATE.usage = None
+            main.STATE.connected = False
+
+    def test_not_paired(self):
+        st = main.entity_states()
+        self.assertEqual(st['binary_sensor.dnsalsa_remote_access'][0], 'off')
+        self.assertEqual(st['sensor.dnsalsa_address'][0], 'not paired')
+        self.assertNotIn('sensor.dnsalsa_traffic_this_month', st, 'no traffic sensor without data')
+
+    def test_working_and_broken(self):
+        main.STATE.save({'token': 't', 'hostname': 'jansen.dnsalsa.nl', 'url': 'https://jansen.dnsalsa.nl', 'service': 'http://homeassistant:80'})
+        with main.STATE.lock:
+            main.STATE.connected, main.STATE.public_ok, main.STATE.ha_reachable = True, True, True
+            main.STATE.usage = {'monthBytes': 12_340_000_000, 'limitGb': 100, 'month': '2026-10'}
+        st = main.entity_states()
+        on, attrs = st['binary_sensor.dnsalsa_remote_access']
+        self.assertEqual(on, 'on')
+        self.assertEqual(attrs['device_class'], 'connectivity')
+        self.assertEqual(st['sensor.dnsalsa_address'][0], 'https://jansen.dnsalsa.nl')
+        gb, tattrs = st['sensor.dnsalsa_traffic_this_month']
+        self.assertEqual(gb, '12.34')
+        self.assertEqual(tattrs['unit_of_measurement'], 'GB')
+        self.assertEqual(tattrs['percent_of_limit'], 12.3)
+        with main.STATE.lock:
+            main.STATE.public_ok = False   # Cloudflare answers 502
+        self.assertEqual(main.entity_states()['binary_sensor.dnsalsa_remote_access'][0], 'off')
+
+    def test_published_through_the_supervisor(self):
+        sent = []
+        real = main.core_api
+        main.core_api = lambda method, path, body=None: sent.append((method, path, body))
+        try:
+            main.publish_entities({'states': None, 'at': 0.0})
+        finally:
+            main.core_api = real
+        self.assertIn(('POST', '/states/binary_sensor.dnsalsa_remote_access'), [(m, p) for m, p, _ in sent])
+        self.assertTrue(all(set(b) == {'state', 'attributes'} for _, _, b in sent))
+
+
 class Page(unittest.TestCase):
     def tearDown(self):
         main.STATE.forget()

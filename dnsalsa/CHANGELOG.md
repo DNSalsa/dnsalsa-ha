@@ -1,8 +1,8 @@
 # Changelog
 
-## 1.2.0
+## 1.2.1
 
-- Three sensors in Home Assistant: `binary_sensor.dnsalsa_remote_access` (on when your address really reaches Home Assistant), `sensor.dnsalsa_address` and `sensor.dnsalsa_traffic_this_month` (in GB, with the fair use limit as an attribute). Use them in automations, for example a notification when remote access goes down.
+- The sensors from 1.2.0 are gone again, and the app no longer asks for access to Home Assistant's API.
 
 ## 1.1.1
 

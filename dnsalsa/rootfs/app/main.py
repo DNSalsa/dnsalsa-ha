@@ -57,7 +57,6 @@ class State:
         self.public_ok = None          # does the public address reach Home Assistant through Cloudflare
         self.public_status = None
         self.route_error = None
-        self.usage = None              # this month's traffic from DNSalsa
         self.connected = False
         self.wake = threading.Event()  # nudges the background loops
 
@@ -338,75 +337,9 @@ def check_all():
     check_public()
 
 
-# ── Sensors in Home Assistant ──
-USAGE_EVERY = 900   # seconds between traffic updates from DNSalsa
-GB = 1e9
-
-
-def fetch_usage(last=[0.0]):  # noqa: B006  remembers the last fetch between calls
-    """This month's tunnel traffic of the account, from DNSalsa, proven by the tunnel token."""
-    saved = STATE.saved
-    if not saved or time.time() - last[0] < USAGE_EVERY:
-        return
-    last[0] = time.time()
-    try:
-        status, r = http_json('POST', f"{options()['server']}/api/pair/usage", {'hostname': saved['hostname'], 'token': saved['token']})
-    except Exception:  # noqa: BLE001  next time
-        return
-    if status == 200:
-        with STATE.lock:
-            STATE.usage = r
-
-
-def entity_states():
-    """What this app shows in Home Assistant, as {entity_id: (state, attributes)}."""
-    with STATE.lock:
-        saved, connected, public_ok, reachable, usage = STATE.saved, STATE.connected, STATE.public_ok, STATE.ha_reachable, STATE.usage
-    remote = bool(saved and connected and public_ok is not False and reachable is not False)
-    out = {
-        'binary_sensor.dnsalsa_remote_access': ('on' if remote else 'off', {
-            'friendly_name': 'DNSalsa remote access', 'device_class': 'connectivity',
-            'address': saved['url'] if saved else None, 'tunnel': 'connected' if connected else 'down',
-        }),
-        'sensor.dnsalsa_address': (saved['url'] if saved else 'not paired', {'friendly_name': 'DNSalsa address', 'icon': 'mdi:web'}),
-    }
-    if saved and usage and usage.get('monthBytes') is not None:
-        used = usage['monthBytes'] / GB
-        limit = usage.get('limitGb')
-        attrs = {'friendly_name': 'DNSalsa traffic this month', 'unit_of_measurement': 'GB', 'device_class': 'data_size',
-                 'state_class': 'total_increasing', 'icon': 'mdi:swap-vertical', 'month': usage.get('month')}
-        if limit:
-            attrs.update({'limit': limit, 'percent_of_limit': round(100 * used / limit, 1)})
-        out['sensor.dnsalsa_traffic_this_month'] = (f'{used:.2f}', attrs)
-    return out
-
-
-def core_api(method, path, body=None):
-    token = supervisor_token()
-    if not token:
-        return None
-    return http_json(method, f'http://supervisor/core/api{path}', body, headers={'Authorization': f'Bearer {token}'}, timeout=10)
-
-
-def publish_entities(last={'states': None, 'at': 0.0}):  # noqa: B006
-    """Push the states to Home Assistant. These entities live until Home Assistant restarts, so they are
-    pushed again every few minutes as well as on every change."""
-    states = entity_states()
-    if states == last['states'] and time.time() - last['at'] < 300:
-        return
-    for entity_id, (state, attrs) in states.items():
-        try:
-            core_api('POST', f'/states/{entity_id}', {'state': state, 'attributes': attrs})
-        except Exception:  # noqa: BLE001  Home Assistant restarting: next round
-            return
-    last['states'], last['at'] = states, time.time()
-
-
 def health_loop():
     while True:
         check_all()
-        fetch_usage()
-        publish_entities()
         with STATE.lock:
             ok = STATE.public_ok is not False and STATE.ha_reachable is not False
         time.sleep(60 if ok else 15)

@@ -9,6 +9,7 @@ import base64
 import html
 import json
 import os
+import ssl
 import subprocess
 import threading
 import time
@@ -19,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 DATA = os.environ.get('DNSALSA_DATA', '/data')
 STATE_FILE = os.path.join(DATA, 'state.json')
 OPTIONS_FILE = os.path.join(DATA, 'options.json')
-HA_URL = os.environ.get('DNSALSA_HA_URL', 'http://homeassistant:8123')
+HA_URL = os.environ.get('DNSALSA_HA_URL', 'http://homeassistant:8123')   # fallback when the Supervisor doesn't say
 INGRESS_PORT = int(os.environ.get('DNSALSA_PORT', '8099'))
 CLOUDFLARED = os.environ.get('DNSALSA_CLOUDFLARED', '/usr/local/bin/cloudflared')
 METRICS = '127.0.0.1:20241'
@@ -50,6 +51,11 @@ class State:
         self.code_expires = 0
         self.error = None
         self.proxy_ok = None           # reverse proxy setting in Home Assistant
+        self.ha = None                 # {'url', 'port', 'ssl'} from the Supervisor; None: unknown, use HA_URL
+        self.ha_reachable = None       # does Home Assistant answer at that address
+        self.public_ok = None          # does the public address reach Home Assistant through Cloudflare
+        self.public_status = None
+        self.route_error = None
         self.connected = False
         self.wake = threading.Event()  # nudges the background loops
 
@@ -99,24 +105,55 @@ def http_json(method, url, body=None, headers=None, timeout=15):
             return e.code, {}
 
 
-def device_name():
-    """Home Assistant version and architecture, shown in the dashboard when the user enters the code."""
+def supervisor_token():
     token = os.environ.get('SUPERVISOR_TOKEN')
-    if not token:
-        # s6-overlay keeps the container's variables here instead of passing them on to the command
-        try:
-            with open('/run/s6/container_environment/SUPERVISOR_TOKEN') as f:
-                token = f.read().strip()
-        except OSError:
-            token = None
-    if not token:
-        return 'Home Assistant'
+    if token:
+        return token
+    # s6-overlay keeps the container's variables here instead of passing them on to the command
     try:
-        _, core = http_json('GET', 'http://supervisor/core/info', headers={'Authorization': f'Bearer {token}'}, timeout=5)
-        d = core.get('data', {})
-        return f"Home Assistant {d.get('version', '')} ({d.get('arch', '')})".replace(' ()', '')
-    except Exception:  # noqa: BLE001  any failure just means a plainer label
+        with open('/run/s6/container_environment/SUPERVISOR_TOKEN') as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def core_info():
+    """Home Assistant's version, architecture, port and SSL setting from the Supervisor, or None."""
+    token = supervisor_token()
+    if not token:
+        return None
+    try:
+        status, core = http_json('GET', 'http://supervisor/core/info', headers={'Authorization': f'Bearer {token}'}, timeout=5)
+        return core.get('data') if status == 200 else None
+    except Exception:  # noqa: BLE001  Supervisor busy: try again later
+        return None
+
+
+def refresh_ha(info=None):
+    """Where Home Assistant listens. New Home Assistant OS installs (2026.8 and later) use port 80, older ones 8123;
+    with its own certificate it speaks https."""
+    info = core_info() if info is None else info
+    port = info.get('port') if info else None
+    if isinstance(port, int) and 0 < port < 65536:
+        use_ssl = info.get('ssl') is True
+        ha = {'url': f"{'https' if use_ssl else 'http'}://homeassistant:{port}", 'port': port, 'ssl': use_ssl}
+        with STATE.lock:
+            STATE.ha = ha
+        return ha
+    return None
+
+
+def ha_url():
+    with STATE.lock:
+        return STATE.ha['url'] if STATE.ha else HA_URL
+
+
+def device_name(info=None):
+    """Home Assistant version and architecture, shown in the dashboard when the user enters the code."""
+    info = core_info() if info is None else info
+    if not info:
         return 'Home Assistant'
+    return f"Home Assistant {info.get('version', '')} ({info.get('arch', '')})".replace(' ()', '')
 
 
 # ── Pairing ──
@@ -128,7 +165,12 @@ def pairing_loop():
             continue
         server = options()['server']
         try:
-            status, r = http_json('POST', f'{server}/api/pair/start', {'device': device_name()})
+            info = core_info()
+            ha = refresh_ha(info) if info else None
+            body = {'device': device_name(info)}
+            if ha:
+                body['ha'] = {'port': ha['port'], 'ssl': ha['ssl']}
+            status, r = http_json('POST', f'{server}/api/pair/start', body)
             if status != 200:
                 raise RuntimeError(r.get('message') or f'HTTP {status}')
             with STATE.lock:
@@ -139,7 +181,7 @@ def pairing_loop():
                 time.sleep(3)
                 status, p = http_json('POST', f'{server}/api/pair/poll', {'secret': secret})
                 if status == 200 and p.get('status') == 'paired':
-                    STATE.save({'token': p['token'], 'hostname': p['hostname'], 'url': p['url']})
+                    STATE.save({'token': p['token'], 'hostname': p['hostname'], 'url': p['url'], 'service': p.get('service')})
                     log(f"Paired. Home Assistant will be reachable at {p['url']}")
                     STATE.wake.set()
                     break
@@ -197,27 +239,93 @@ def tunnel_loop():
 
 
 # ── Home Assistant reverse proxy setting ──
+# Home Assistant's own certificate is for your domain, never for "homeassistant": don't verify it on this hop.
+INSECURE = ssl.create_default_context()
+INSECURE.check_hostname = False
+INSECURE.verify_mode = ssl.CERT_NONE
+
+
 def check_proxy():
     """Home Assistant answers 400 to a forwarded request when 'Trust X-Forwarded-For' is off or we aren't trusted.
     /manifest.json needs no login, so this check never shows up as a failed login in Home Assistant.
-    203.0.113.7 is a documentation address (TEST-NET-3) that no real visitor has."""
-    req = urllib.request.Request(f'{HA_URL}/manifest.json', headers={'X-Forwarded-For': '203.0.113.7'})
+    203.0.113.7 is a documentation address (TEST-NET-3) that no real visitor has.
+    No answer at all: Home Assistant is restarting, or listens somewhere else; the proxy setting is unknown then."""
+    url = ha_url()
+    req = urllib.request.Request(f'{url}/manifest.json', headers={'X-Forwarded-For': '203.0.113.7'})
     try:
-        with urllib.request.urlopen(req, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=5, context=INSECURE if url.startswith('https:') else None) as r:
             code = r.status
     except urllib.error.HTTPError as e:
         code = e.code
-    except Exception:  # noqa: BLE001  Home Assistant restarting: unknown for now
+    except Exception:  # noqa: BLE001
         code = None
     with STATE.lock:
+        STATE.ha_reachable = code is not None
         STATE.proxy_ok = None if code is None else code != 400
     return STATE.proxy_ok
 
 
-def proxy_loop():
+ROUTE_RETRY = 600   # seconds between attempts to fix the tunnel's route
+
+
+def sync_route(last_try=[0.0]):  # noqa: B006  remembers the last attempt between calls
+    """Point the tunnel at the address Home Assistant really uses, if DNSalsa has another one on file."""
+    saved, ha = STATE.saved, STATE.ha
+    if not saved or not ha or saved.get('service') == ha['url'] or time.time() - last_try[0] < ROUTE_RETRY:
+        return
+    last_try[0] = time.time()
+    try:
+        status, r = http_json('POST', f"{options()['server']}/api/pair/service",
+                              {'hostname': saved['hostname'], 'token': saved['token'], 'port': ha['port'], 'ssl': ha['ssl']})
+    except Exception as e:  # noqa: BLE001
+        log(f'Could not update the route: {e}')
+        return
+    if status == 200:
+        STATE.save({**saved, 'service': r.get('service', ha['url'])})
+        with STATE.lock:
+            STATE.route_error = None
+        if r.get('changed'):
+            log(f"Tunnel now points at Home Assistant on {ha['url']}")
+    else:
+        with STATE.lock:
+            STATE.route_error = r.get('message') or f'HTTP {status}'
+        log(f'Could not update the route: {STATE.route_error}')
+
+
+def check_public():
+    """Fetch /manifest.json through Cloudflare, the way a visitor would. 502 or 530 means Cloudflare can't get through."""
+    saved = STATE.saved
+    if not saved or not STATE.connected:
+        with STATE.lock:
+            STATE.public_ok, STATE.public_status = None, None
+        return None
+    req = urllib.request.Request(f"{saved['url']}/manifest.json", headers={'User-Agent': 'dnsalsa-ha/1.1'})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            code = r.status
+    except urllib.error.HTTPError as e:
+        code = e.code
+    except Exception:  # noqa: BLE001  our own internet is down: unknown
+        code = None
+    with STATE.lock:
+        STATE.public_status = code
+        STATE.public_ok = None if code is None else code < 500
+    return STATE.public_ok
+
+
+def check_all():
+    refresh_ha()
+    check_proxy()
+    sync_route()
+    check_public()
+
+
+def health_loop():
     while True:
-        check_proxy()
-        time.sleep(60)
+        check_all()
+        with STATE.lock:
+            ok = STATE.public_ok is not False and STATE.ha_reachable is not False
+        time.sleep(60 if ok else 15)
 
 
 # ── Page in the Home Assistant sidebar ──
@@ -307,10 +415,14 @@ def render():
     with STATE.lock:
         saved, code, expires, error = STATE.saved, STATE.code, STATE.code_expires, STATE.error
         proxy_ok, connected = STATE.proxy_ok, STATE.connected
+        ha_reachable, public_ok, public_status, route_error = STATE.ha_reachable, STATE.public_ok, STATE.public_status, STATE.route_error
+        target = STATE.ha['url'] if STATE.ha else HA_URL
     server = html.escape(options()['server'])
     parts = []
     if not saved:
         pill = '<span class="pill"><i></i>Not paired</span>'
+    elif connected and public_ok is False:
+        pill = '<span class="pill wait"><i></i>Not reachable</span>'
     elif connected:
         pill = '<span class="pill ok"><i></i>Connected</span>'
     else:
@@ -333,6 +445,17 @@ def render():
         parts.append(f'''<div class="card hero"><div class="label">Your Home Assistant address</div>
 <a class="addr" href="{url}" target="_blank" rel="noopener">{url}</a>
 <p class="muted small">In the Home Assistant app on your phone: Settings → Companion app → Server → External URL.</p></div>''')
+    if saved and ha_reachable is False:
+        parts.append(f'''<div class="card warn"><h2 class="warn">Can't reach Home Assistant</h2>
+<p>This app gets no answer from Home Assistant at <code>{html.escape(target)}</code>.
+If Home Assistant is restarting, this clears by itself in a minute.</p></div>''')
+    elif saved and connected and public_ok is False:
+        why = (f'DNSalsa could not update the tunnel: {html.escape(route_error)}. Press "Pair again" to set it up fresh.'
+               if route_error else 'This app is pointing the tunnel at the right address now; give it a minute.')
+        parts.append(f'''<div class="card warn"><h2 class="warn">Your address doesn't reach Home Assistant yet</h2>
+<p>Cloudflare answers <code>{html.escape(str(public_status))}</code> for your address: the tunnel is up, but it can't get through
+to Home Assistant on <code>{html.escape(target)}</code>.</p><p class="muted small">{why}</p>
+<form class="row" data-post="check"><button>Check again</button></form></div>''')
     if proxy_ok is False:
         parts.append('''<div class="card warn"><h2 class="warn">One setting needed in Home Assistant</h2>
 <p>Home Assistant blocks traffic from the tunnel until you allow it. This takes about 30 seconds:</p>
@@ -345,14 +468,14 @@ def render():
 <li>Save, and confirm the new settings after Home Assistant restarts.</li></ol>
 <p class="muted small">Already have a proxy in that list? Add this address, keep the others. This page turns green by itself once it works.</p>
 <form class="row" data-post="check"><button>Check again</button></form></div>''')
-    elif proxy_ok and saved:
+    elif proxy_ok and saved and public_ok is not False:
         parts.append(f'''<div class="card"><div class="check">{CHECK}<p>Home Assistant accepts traffic from the tunnel.</p></div>
 <p class="muted small">Tip: in <a href="/config/network" target="_top">network settings</a>, turn on <b>Enable IP banning</b> with <b>Login attempts before ban</b> at 10. Bans stay until you remove them from <code>ip_bans.yaml</code>.</p></div>''')
     if saved:
         parts.append('''<div class="card"><h2>Pair again</h2><p class="muted small">Use another hostname or another DNSalsa account.
 This disconnects the current address from this Home Assistant.</p>
 <form class="row" data-post="unpair"><button>Pair again</button></form></div>''')
-    refresh = '' if (saved and connected and proxy_ok) else 'setTimeout(()=>location.reload(),4000);'
+    refresh = '' if (saved and connected and proxy_ok and public_ok is not False) else 'setTimeout(()=>location.reload(),4000);'
     return PAGE.replace('__PILL__', pill).replace('__BODY__', '\n'.join(parts)).replace('__REFRESH__', refresh)
 
 
@@ -381,7 +504,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.rstrip('/').endswith('status'):
             with STATE.lock:
                 return self._send(200, json.dumps({'paired': bool(STATE.saved), 'code': STATE.code, 'connected': STATE.connected,
-                                                   'proxyOk': STATE.proxy_ok, 'error': STATE.error}), 'application/json')
+                                                   'proxyOk': STATE.proxy_ok, 'haReachable': STATE.ha_reachable,
+                                                   'publicOk': STATE.public_ok, 'error': STATE.error}), 'application/json')
         self._send(200, render())
 
     def do_POST(self):
@@ -389,7 +513,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = self.path.rstrip('/')
         if path.endswith('check'):
-            check_proxy()
+            check_all()
         elif path.endswith('unpair'):
             STATE.forget()
             log('Unpaired; getting a new pairing code')
@@ -399,7 +523,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     os.makedirs(DATA, exist_ok=True)
-    for fn in (pairing_loop, tunnel_loop, proxy_loop):
+    for fn in (pairing_loop, tunnel_loop, health_loop):
         threading.Thread(target=fn, daemon=True).start()
     log(f'DNSalsa app running, server {options()["server"]}')
     ThreadingHTTPServer(('0.0.0.0', INGRESS_PORT), Handler).serve_forever()

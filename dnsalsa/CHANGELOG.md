@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.0
+
+- Works with Home Assistant on any port. New Home Assistant OS installs (2026.8 and later) listen on port 80 instead of 8123; the app now asks Home Assistant where it listens, and whether it uses its own certificate, and sets the tunnel to match. If that changes later, the app fixes the tunnel by itself.
+- "Connected" now means your address really reaches Home Assistant. The app checks it through Cloudflare, like a visitor, and says so when Home Assistant doesn't answer.
+
 ## 1.0.5
 
 - The setup steps now suggest turning on IP banning, with a ban after 10 failed logins.

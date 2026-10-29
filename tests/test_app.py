@@ -46,6 +46,8 @@ class ProxyCheck(unittest.TestCase):
     def setUp(self):
         self.url, self.srv = serve(FakeHA)
         main.HA_URL = self.url
+        with main.STATE.lock:
+            main.STATE.ha = None   # no Supervisor here: the fallback address
         FakeHA.seen = []
 
     def tearDown(self):
@@ -76,19 +78,26 @@ class ProxyCheck(unittest.TestCase):
 
 class FakeDNSalsa(BaseHTTPRequestHandler):
     polls = 0
+    start_body = None
+    service_body = None
 
     def log_message(self, *a):
         pass
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
-        if self.path == '/api/pair/start':
+        if self.path == '/api/pair/service':
+            FakeDNSalsa.service_body = body
+            out = {'changed': True, 'service': f"{'https' if body['ssl'] else 'http'}://homeassistant:{body['port']}"}
+        elif self.path == '/api/pair/start':
+            FakeDNSalsa.start_body = body
             out = {'code': 'K7QP-4XM2', 'secret': 's' * 32, 'expiresAt': (time.time() + 900) * 1000}
         elif self.path == '/api/pair/poll':
             assert body.get('secret') == 's' * 32
             FakeDNSalsa.polls += 1
             out = {'status': 'waiting'} if FakeDNSalsa.polls < 2 else \
-                {'status': 'paired', 'token': 'tok-123', 'hostname': 'jansen.dnsalsa.nl', 'url': 'https://jansen.dnsalsa.nl'}
+                {'status': 'paired', 'token': 'tok-123', 'hostname': 'jansen.dnsalsa.nl', 'url': 'https://jansen.dnsalsa.nl',
+                 'service': 'http://homeassistant:80'}
         else:
             self.send_response(404)
             self.end_headers()
@@ -107,6 +116,8 @@ class Pairing(unittest.TestCase):
             json.dump({'server': url}, f)
         real_time = main.time
         main.time = types.SimpleNamespace(time=real_time.time, sleep=lambda s: real_time.sleep(0.02))
+        real_core = main.core_info
+        main.core_info = lambda: {'version': '2026.10.3', 'arch': 'aarch64', 'port': 80, 'ssl': False}
         try:
             main.STATE.forget()
             threading.Thread(target=main.pairing_loop, daemon=True).start()
@@ -114,16 +125,84 @@ class Pairing(unittest.TestCase):
                 if main.STATE.saved:
                     break
                 real_time.sleep(0.02)
-            self.assertEqual(main.STATE.saved, {'token': 'tok-123', 'hostname': 'jansen.dnsalsa.nl', 'url': 'https://jansen.dnsalsa.nl'})
+            self.assertEqual(main.STATE.saved, {'token': 'tok-123', 'hostname': 'jansen.dnsalsa.nl', 'url': 'https://jansen.dnsalsa.nl',
+                                                'service': 'http://homeassistant:80'})
+            self.assertEqual(FakeDNSalsa.start_body['ha'], {'port': 80, 'ssl': False}, 'DNSalsa learns where Home Assistant listens')
+            self.assertEqual(FakeDNSalsa.start_body['device'], 'Home Assistant 2026.10.3 (aarch64)')
             self.assertIsNone(main.STATE.code, 'the code disappears once paired')
             mode = stat.S_IMODE(os.stat(main.STATE_FILE).st_mode)
             self.assertEqual(mode, 0o600, 'the tunnel token is only readable by the app')
             self.assertEqual(main.State()._load()['token'], 'tok-123', 'survives a restart')
         finally:
             main.time = real_time
+            main.core_info = real_core
+            with main.STATE.lock:
+                main.STATE.ha = None
             srv.shutdown()
             srv.server_close()
             main.STATE.forget()
+
+
+class WhereHomeAssistantListens(unittest.TestCase):
+    def tearDown(self):
+        main.STATE.forget()
+        with main.STATE.lock:
+            main.STATE.ha = None
+            main.STATE.ha_reachable = main.STATE.public_ok = main.STATE.route_error = None
+            main.STATE.connected = False
+
+    def test_port_and_ssl_from_the_supervisor(self):
+        self.assertEqual(main.refresh_ha({'port': 80, 'ssl': False})['url'], 'http://homeassistant:80')
+        self.assertEqual(main.ha_url(), 'http://homeassistant:80')
+        self.assertEqual(main.refresh_ha({'port': 8123, 'ssl': True})['url'], 'https://homeassistant:8123')
+        self.assertIsNone(main.refresh_ha({'port': 'x'}), 'odd answers are ignored')
+        self.assertEqual(main.ha_url(), 'https://homeassistant:8123', 'and the last good one stays')
+
+    def test_no_answer_means_unreachable(self):
+        main.HA_URL = 'http://127.0.0.1:9'
+        self.assertIsNone(main.check_proxy())
+        self.assertIs(main.STATE.ha_reachable, False)
+
+    def test_route_fixed_when_home_assistant_moved(self):
+        url, srv = serve(FakeDNSalsa)
+        with open(main.OPTIONS_FILE, 'w') as f:
+            json.dump({'server': url}, f)
+        try:
+            main.STATE.save({'token': 'tok-123', 'hostname': 'jansen.dnsalsa.nl', 'url': 'https://jansen.dnsalsa.nl',
+                             'service': 'http://homeassistant:8123'})
+            main.refresh_ha({'port': 80, 'ssl': False})
+            main.sync_route([0.0])
+            self.assertEqual(FakeDNSalsa.service_body, {'hostname': 'jansen.dnsalsa.nl', 'token': 'tok-123', 'port': 80, 'ssl': False})
+            self.assertEqual(main.STATE.saved['service'], 'http://homeassistant:80')
+            FakeDNSalsa.service_body = None
+            main.sync_route([0.0])
+            self.assertIsNone(FakeDNSalsa.service_body, 'nothing to do once they match')
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_bad_gateway_is_shown_not_hidden(self):
+        class Cloudflare502(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                self.send_response(502)
+                self.end_headers()
+        url, srv = serve(Cloudflare502)
+        try:
+            main.STATE.save({'token': 't', 'hostname': 'jansen.dnsalsa.nl', 'url': url, 'service': 'http://homeassistant:80'})
+            with main.STATE.lock:
+                main.STATE.connected = True
+                main.STATE.ha_reachable = True
+            self.assertIs(main.check_public(), False)
+            page = main.render()
+            self.assertIn('Not reachable', page)
+            self.assertNotIn('>Connected<', page)
+            self.assertIn("doesn't reach Home Assistant", page)
+        finally:
+            srv.shutdown()
+            srv.server_close()
 
 
 class Page(unittest.TestCase):

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0
+
+- Dynamic DNS without a tunnel, also on a free DNSalsa account. Pair under **Setup → Dynamic DNS → Home Assistant app** in the dashboard, and the app keeps your hostname on your home address: it looks up your IPv4 and IPv6 address and sends both to DNSalsa in one update.
+- On the app page: switches for IPv4 and IPv6, and how often to check (30 seconds to 1 hour, 5 minutes by default). Turning one off removes that record.
+- An address the app can't find three times in a row (you lost IPv6, say) gets its record removed, so the name doesn't point at an old address.
+
 ## 1.2.1
 
 - The sensors from 1.2.0 are gone again, and the app no longer asks for access to Home Assistant's API.

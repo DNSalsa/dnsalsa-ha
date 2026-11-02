@@ -2,7 +2,7 @@
 
 Reach your Home Assistant from anywhere at your own address, like `jansen.dnsalsa.nl`. No port forwarding, no router settings, and your home IP stays hidden. The traffic runs through a Cloudflare Tunnel that DNSalsa sets up for you.
 
-You need a DNSalsa account with the Remote subscription.
+For that you need a DNSalsa account with the Remote subscription. Without Remote, the app can still keep a hostname on your home address (dynamic DNS), see below.
 
 ## Connecting
 
@@ -23,6 +23,21 @@ Home Assistant only accepts traffic from the tunnel after you allow it. The app 
 ## Phone app
 
 In the Home Assistant Companion app: **Settings → Companion app → Server → External URL**, and enter your DNSalsa address.
+
+## Dynamic DNS without a tunnel
+
+Free accounts too. The app keeps your hostname on your home address, like a DDNS client. You reach Home Assistant from outside only with a port forward on your router; Remote needs none.
+
+1. Start the app and open **DNSalsa** in the sidebar. It shows a code.
+2. In your DNSalsa dashboard, open the hostname, choose **Setup → Dynamic DNS → Home Assistant app** and enter the code. The app gets its own token for that hostname; a token you used before stops working.
+3. The app page shows your IPv4 and IPv6 address as DNSalsa has them.
+
+On the app page:
+
+- **IPv4** and **IPv6** switches. Turning one off removes that record at DNSalsa. Free accounts get IPv4 only; the page says so when DNSalsa leaves IPv6 out.
+- **Check every**: 30 seconds to 1 hour, 5 minutes by default. A check costs nothing; DNSalsa only changes a record when your address changes.
+
+The app finds your addresses by asking DNSalsa (`/api/ip`), once over IPv4 and once over IPv6. If it can't find an address three times in a row, it removes that record, so your name doesn't point at an old address. No IPv6 address shows up while your network has IPv6? Then the container network of Home Assistant has no IPv6.
 
 ## Help
 

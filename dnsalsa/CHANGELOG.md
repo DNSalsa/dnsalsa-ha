@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1
+
+- cloudflared 2026.10.7.
+
 ## 1.3.0
 
 - Dynamic DNS without a tunnel, also on a free DNSalsa account. Pair under **Setup → Dynamic DNS → Home Assistant app** in the dashboard, and the app keeps your hostname on your home address: it looks up your IPv4 and IPv6 address and sends both to DNSalsa in one update.

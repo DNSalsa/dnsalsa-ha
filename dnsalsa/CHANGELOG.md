@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.6
+
+- Fixes a blank app page on iPhone and iPad after pairing: the page now redraws itself once its fonts have loaded.
+
 ## 1.3.5
 
 - A **Copy** button next to the pairing code.

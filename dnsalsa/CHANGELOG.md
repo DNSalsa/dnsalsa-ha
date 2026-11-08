@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.4
+
+- Clearer pairing steps: step 2 explains the difference between remote access and dynamic DNS, and which one needs a port forward.
+
 ## 1.3.3
 
 - The app page is about 12 KB instead of 60 KB: the fonts load once and stay cached, instead of coming along with every page.

@@ -684,8 +684,11 @@ def render():
             parts.append(f'''<div class="card hero"><div class="label">Pairing code</div>
 <div class="code">{html.escape(code)}</div>
 <ol><li>Open <a href="{server}/dashboard" target="_blank" rel="noopener">your DNSalsa dashboard</a>.</li>
-<li>At the hostname you want, choose <b>Setup → Home Assistant</b> for remote access (Remote),
-or <b>Setup → Dynamic DNS → Home Assistant app</b> to keep it on your home address.</li>
+<li>At the hostname you want, pick what it should do:<br>
+<b>Setup → Home Assistant</b> to open Home Assistant from anywhere, without a port forward. This needs Remote, and the first
+month is free.<br>
+<b>Setup → Dynamic DNS → Home Assistant app</b> to only keep the hostname on your home IP address. That's free, but you need a
+port forward on your router to reach Home Assistant with it.</li>
 <li>Enter the code above. This page updates by itself.</li></ol>
 <p class="muted small">The code works for {mins} more minute{'s' if mins != 1 else ''}; after that you get a new one here.</p></div>''')
         else:

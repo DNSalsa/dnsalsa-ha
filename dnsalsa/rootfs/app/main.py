@@ -7,7 +7,6 @@ sidebar (ingress).
 
 Only the Python standard library: no packages to install or update.
 """
-import base64
 import html
 import http.client
 import ipaddress
@@ -503,12 +502,14 @@ def health_loop():
 FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts')
 
 
-def _font(name):
+# Served next to the page with a year-long cache, so the browser downloads them once instead of with every page (60 KB inline).
+FONTS = {}
+for _name in ('space-grotesk-latin-wght-normal.woff2', 'space-mono-latin-700-normal.woff2'):
     try:
-        with open(os.path.join(FONT_DIR, name), 'rb') as f:
-            return 'data:font/woff2;base64,' + base64.b64encode(f.read()).decode()
+        with open(os.path.join(FONT_DIR, _name), 'rb') as _f:
+            FONTS[_name] = _f.read()
     except OSError:
-        return ''
+        pass
 
 
 FLAME = ('<svg class="flame" viewBox="0 0 52 70" aria-hidden="true"><defs><linearGradient id="fl" x1="0" y1="70" x2="52" y2="0" '
@@ -519,8 +520,8 @@ FLAME = ('<svg class="flame" viewBox="0 0 52 70" aria-hidden="true"><defs><linea
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DNSalsa</title><style>
-@font-face{font-family:'Space Grotesk';src:url(__SANS__) format('woff2');font-weight:300 700;font-display:swap}
-@font-face{font-family:'Space Mono';src:url(__MONO__) format('woff2');font-weight:700;font-display:swap}
+@font-face{font-family:'Space Grotesk';src:url(fonts/space-grotesk-latin-wght-normal.woff2) format('woff2');font-weight:300 700;font-display:swap}
+@font-face{font-family:'Space Mono';src:url(fonts/space-mono-latin-700-normal.woff2) format('woff2');font-weight:700;font-display:swap}
 :root{color-scheme:dark;--red:oklch(48% .23 22);--orange:oklch(63% .22 42);--heat:oklch(72% .2 55);
 --bg:oklch(11% .015 22);--card:oklch(15% .018 22);--card2:oklch(18% .02 22);--line:oklch(24% .015 22);
 --muted:oklch(66% .012 55);--fg:oklch(96% .008 55);--ok:oklch(74% .16 150);
@@ -598,7 +599,7 @@ try{ok=document.execCommand('copy')}catch(e){}a.remove()}
 b.textContent=ok?'Copied':'Select and copy';setTimeout(()=>b.textContent='Copy',2000)}))}
 bind(document);schedule();
 </script></body></html>"""
-PAGE = PAGE.replace('__SANS__', _font('space-grotesk-latin-wght-normal.woff2')).replace('__MONO__', _font('space-mono-latin-700-normal.woff2')).replace('__FLAME__', FLAME)
+PAGE = PAGE.replace('__FLAME__', FLAME)
 
 CHECK = ('<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" '
          'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>')
@@ -758,18 +759,21 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def _send(self, code, body, ctype='text/html; charset=utf-8'):
-        data = body.encode()
+    def _send(self, code, body, ctype='text/html; charset=utf-8', cache='no-store'):
+        data = body if isinstance(body, bytes) else body.encode()
         self.send_response(code)
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(data)))
-        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Cache-Control', cache)
         self.end_headers()
         self.wfile.write(data)
 
     def do_GET(self):
         if not self._allowed():
             return
+        name = self.path.split('?')[0].rsplit('/', 1)[-1]
+        if '/fonts/' in self.path and name in FONTS:
+            return self._send(200, FONTS[name], 'font/woff2', 'public, max-age=31536000, immutable')
         if self.path.rstrip('/').endswith('status'):
             with STATE.lock:
                 d = STATE.ddns

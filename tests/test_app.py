@@ -386,8 +386,22 @@ class Page(unittest.TestCase):
         self.assertNotIn('Enable IP banning', main.render(), 'not in the setup steps either')
         os.remove(main.PREFS_FILE)
 
-    def test_fonts_are_embedded(self):
-        self.assertIn('data:font/woff2;base64,', main.PAGE, 'the page has no external requests')
+    def test_fonts_are_served_with_a_long_cache(self):
+        self.assertNotIn('data:font', main.PAGE, 'fonts are not inlined in every page')
+        self.assertIn('url(fonts/space-grotesk-latin-wght-normal.woff2)', main.PAGE, 'relative, so it works under the ingress path')
+        url, srv = serve(main.Handler)
+        try:
+            import urllib.request
+            with urllib.request.urlopen(f'{url}/fonts/space-mono-latin-700-normal.woff2', timeout=5) as r:
+                self.assertEqual(r.headers['Content-Type'], 'font/woff2')
+                self.assertIn('immutable', r.headers['Cache-Control'])
+                self.assertEqual(r.read(), main.FONTS['space-mono-latin-700-normal.woff2'])
+            with urllib.request.urlopen(f'{url}/', timeout=5) as r:
+                self.assertEqual(r.headers['Cache-Control'], 'no-store')
+                self.assertLess(len(r.read()), 20000)
+        finally:
+            srv.shutdown()
+            srv.server_close()
 
 
 class Ingress(unittest.TestCase):

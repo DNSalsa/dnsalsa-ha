@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.3
+
+- The app page is about 12 KB instead of 60 KB: the fonts load once and stay cached, instead of coming along with every page.
+
 ## 1.3.2
 
 - The app page no longer flashes white while it waits for the connection: it updates in place instead of reloading.

@@ -360,7 +360,7 @@ class Page(unittest.TestCase):
         self.assertIn('Connected', page)
         self.assertIn('Enable IP banning', page, 'IP ban tip stays once the proxy works')
         self.assertIn('data-post="hide-ban-tip"', page)
-        self.assertNotIn('setTimeout(()=>location.reload()', page, 'no auto-refresh once everything works')
+        self.assertNotIn('<main data-refresh>', page, 'no auto-refresh once everything works')
 
     def test_ban_tip_can_be_hidden_for_good(self):
         try:

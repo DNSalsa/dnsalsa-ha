@@ -31,6 +31,7 @@ HA_URL = os.environ.get('DNSALSA_HA_URL', 'http://homeassistant:8123')   # fallb
 INGRESS_PORT = int(os.environ.get('DNSALSA_PORT', '8099'))
 CLOUDFLARED = os.environ.get('DNSALSA_CLOUDFLARED', '/usr/local/bin/cloudflared')
 METRICS = '127.0.0.1:20241'
+SUPERVISOR = os.environ.get('DNSALSA_SUPERVISOR', 'http://supervisor')   # tests point this at a fake
 INGRESS_PEERS = {'172.30.32.2', '127.0.0.1'}  # Home Assistant's ingress proxy (and local tests)
 USER_AGENT = 'dnsalsa-ha/1.3'
 MISSES_BEFORE_REMOVE = 3   # lookups in a row without an address before its record goes
@@ -180,10 +181,37 @@ def core_info():
     if not token:
         return None
     try:
-        status, core = http_json('GET', 'http://supervisor/core/info', headers={'Authorization': f'Bearer {token}'}, timeout=5)
+        status, core = http_json('GET', f'{SUPERVISOR}/core/info', headers={'Authorization': f'Bearer {token}'}, timeout=5)
         return core.get('data') if status == 200 else None
     except Exception:  # noqa: BLE001  Supervisor busy: try again later
         return None
+
+
+def apply_defaults():
+    """Turn on Show in sidebar and Watchdog once. Someone who switches either off later keeps that choice."""
+    if prefs().get('defaults_applied'):
+        return True
+    token = supervisor_token()
+    if not token:
+        return False
+    try:
+        status, _ = http_json('POST', f'{SUPERVISOR}/addons/self/options', {'ingress_panel': True, 'watchdog': True},
+                              headers={'Authorization': f'Bearer {token}'}, timeout=10)
+    except Exception:  # noqa: BLE001  Supervisor busy: the next try or the next start
+        return False
+    if status != 200:
+        log(f'Could not turn on Show in sidebar and Watchdog: HTTP {status}')
+        return False
+    set_pref('defaults_applied', True)
+    log('Turned on Show in sidebar and Watchdog')
+    return True
+
+
+def defaults_loop():
+    for _ in range(5):
+        if apply_defaults():
+            return
+        time.sleep(30)
 
 
 def refresh_ha(info=None):
@@ -684,8 +712,11 @@ def render():
             parts.append(f'''<div class="card hero"><div class="label">Pairing code</div>
 <div class="code">{html.escape(code)}</div>
 <ol><li>Open <a href="{server}/dashboard" target="_blank" rel="noopener">your DNSalsa dashboard</a>.</li>
-<li>At the hostname you want, choose <b>Setup → Home Assistant</b> for remote access (Remote),
-or <b>Setup → Dynamic DNS → Home Assistant app</b> to keep it on your home address.</li>
+<li>At the hostname you want, pick what it should do:<br>
+<b>Setup → Home Assistant</b> to open Home Assistant from anywhere, without a port forward. This needs Remote, and the first
+month is free.<br>
+<b>Setup → Dynamic DNS → Home Assistant app</b> to only keep the hostname on your home IP address. That's free, but you need a
+port forward on your router to reach Home Assistant with it.</li>
 <li>Enter the code above. This page updates by itself.</li></ol>
 <p class="muted small">The code works for {mins} more minute{'s' if mins != 1 else ''}; after that you get a new one here.</p></div>''')
         else:
@@ -803,7 +834,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     os.makedirs(DATA, exist_ok=True)
-    for fn in (pairing_loop, tunnel_loop, health_loop, ddns_loop):
+    for fn in (defaults_loop, pairing_loop, tunnel_loop, health_loop, ddns_loop):
         threading.Thread(target=fn, daemon=True).start()
     log(f'DNSalsa app running, server {options()["server"]}')
     ThreadingHTTPServer(('0.0.0.0', INGRESS_PORT), Handler).serve_forever()

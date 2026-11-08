@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.4
+
+- On the first start, the app turns on **Show in sidebar** and **Watchdog**. Turn either off on the app's page and it stays off.
+- Clearer pairing steps: step 2 explains the difference between remote access and dynamic DNS, and which one needs a port forward.
+
 ## 1.3.3
 
 - The app page is about 12 KB instead of 60 KB: the fonts load once and stay cached, instead of coming along with every page.

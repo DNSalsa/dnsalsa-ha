@@ -31,6 +31,7 @@ HA_URL = os.environ.get('DNSALSA_HA_URL', 'http://homeassistant:8123')   # fallb
 INGRESS_PORT = int(os.environ.get('DNSALSA_PORT', '8099'))
 CLOUDFLARED = os.environ.get('DNSALSA_CLOUDFLARED', '/usr/local/bin/cloudflared')
 METRICS = '127.0.0.1:20241'
+SUPERVISOR = os.environ.get('DNSALSA_SUPERVISOR', 'http://supervisor')   # tests point this at a fake
 INGRESS_PEERS = {'172.30.32.2', '127.0.0.1'}  # Home Assistant's ingress proxy (and local tests)
 USER_AGENT = 'dnsalsa-ha/1.3'
 MISSES_BEFORE_REMOVE = 3   # lookups in a row without an address before its record goes
@@ -180,10 +181,37 @@ def core_info():
     if not token:
         return None
     try:
-        status, core = http_json('GET', 'http://supervisor/core/info', headers={'Authorization': f'Bearer {token}'}, timeout=5)
+        status, core = http_json('GET', f'{SUPERVISOR}/core/info', headers={'Authorization': f'Bearer {token}'}, timeout=5)
         return core.get('data') if status == 200 else None
     except Exception:  # noqa: BLE001  Supervisor busy: try again later
         return None
+
+
+def apply_defaults():
+    """Turn on Show in sidebar and Watchdog once. Someone who switches either off later keeps that choice."""
+    if prefs().get('defaults_applied'):
+        return True
+    token = supervisor_token()
+    if not token:
+        return False
+    try:
+        status, _ = http_json('POST', f'{SUPERVISOR}/addons/self/options', {'ingress_panel': True, 'watchdog': True},
+                              headers={'Authorization': f'Bearer {token}'}, timeout=10)
+    except Exception:  # noqa: BLE001  Supervisor busy: the next try or the next start
+        return False
+    if status != 200:
+        log(f'Could not turn on Show in sidebar and Watchdog: HTTP {status}')
+        return False
+    set_pref('defaults_applied', True)
+    log('Turned on Show in sidebar and Watchdog')
+    return True
+
+
+def defaults_loop():
+    for _ in range(5):
+        if apply_defaults():
+            return
+        time.sleep(30)
 
 
 def refresh_ha(info=None):
@@ -806,7 +834,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     os.makedirs(DATA, exist_ok=True)
-    for fn in (pairing_loop, tunnel_loop, health_loop, ddns_loop):
+    for fn in (defaults_loop, pairing_loop, tunnel_loop, health_loop, ddns_loop):
         threading.Thread(target=fn, daemon=True).start()
     log(f'DNSalsa app running, server {options()["server"]}')
     ThreadingHTTPServer(('0.0.0.0', INGRESS_PORT), Handler).serve_forever()

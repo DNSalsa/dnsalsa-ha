@@ -152,6 +152,42 @@ class WhereHomeAssistantListens(unittest.TestCase):
             main.STATE.ha_reachable = main.STATE.public_ok = main.STATE.route_error = None
             main.STATE.connected = False
 
+    def test_sidebar_and_watchdog_on_once(self):
+        calls = []
+
+        class FakeSupervisor(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                calls.append((self.path, self.headers['Authorization'], json.loads(self.rfile.read(int(self.headers['Content-Length'])))))
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(b'{"result":"ok","data":{}}')
+
+        url, srv = serve(FakeSupervisor)
+        old = main.SUPERVISOR, os.environ.get('SUPERVISOR_TOKEN')
+        main.SUPERVISOR, os.environ['SUPERVISOR_TOKEN'] = url, 'sup-token'
+        try:
+            os.remove(main.PREFS_FILE)
+        except OSError:
+            pass
+        try:
+            self.assertTrue(main.apply_defaults())
+            self.assertEqual(calls, [('/addons/self/options', 'Bearer sup-token', {'ingress_panel': True, 'watchdog': True})])
+            self.assertTrue(main.apply_defaults())
+            self.assertEqual(len(calls), 1, 'only once, so turning them off later sticks')
+        finally:
+            srv.shutdown()
+            srv.server_close()
+            main.SUPERVISOR = old[0]
+            if old[1] is None:
+                os.environ.pop('SUPERVISOR_TOKEN', None)
+            else:
+                os.environ['SUPERVISOR_TOKEN'] = old[1]
+            os.remove(main.PREFS_FILE)
+
     def test_port_and_ssl_from_the_supervisor(self):
         self.assertEqual(main.refresh_ha({'port': 80, 'ssl': False})['url'], 'http://homeassistant:80')
         self.assertEqual(main.ha_url(), 'http://homeassistant:80')

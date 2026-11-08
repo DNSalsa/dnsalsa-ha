@@ -548,8 +548,8 @@ FLAME = ('<svg class="flame" viewBox="0 0 52 70" aria-hidden="true"><defs><linea
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DNSalsa</title><style>
-@font-face{font-family:'Space Grotesk';src:url(fonts/space-grotesk-latin-wght-normal.woff2) format('woff2');font-weight:300 700;font-display:swap}
-@font-face{font-family:'Space Mono';src:url(fonts/space-mono-latin-700-normal.woff2) format('woff2');font-weight:700;font-display:swap}
+@font-face{font-family:'Space Grotesk';src:url(fonts/space-grotesk-latin-wght-normal.woff2) format('woff2');font-weight:300 700;font-display:block}
+@font-face{font-family:'Space Mono';src:url(fonts/space-mono-latin-700-normal.woff2) format('woff2');font-weight:700;font-display:block}
 :root{color-scheme:dark;--red:oklch(48% .23 22);--orange:oklch(63% .22 42);--heat:oklch(72% .2 55);
 --bg:oklch(11% .015 22);--card:oklch(15% .018 22);--card2:oklch(18% .02 22);--line:oklch(24% .015 22);
 --muted:oklch(66% .012 55);--fg:oklch(96% .008 55);--ok:oklch(74% .16 150);
@@ -610,7 +610,7 @@ function schedule(){clearTimeout(tm);if(document.querySelector('main[data-refres
 async function soft(){
 try{const r=await fetch(location.href,{cache:'no-store'});if(!r.ok)throw 0;
 const m=new DOMParser().parseFromString(await r.text(),'text/html').querySelector('main');if(!m)throw 0;
-document.querySelector('main').replaceWith(m);bind(m)}catch(e){}
+document.querySelector('main').replaceWith(m);bind(m);repaint()}catch(e){}
 schedule()}
 function bind(root){
 root.querySelectorAll('form[data-post]').forEach(f=>f.addEventListener('submit',async e=>{e.preventDefault();
@@ -626,6 +626,14 @@ if(!ok){const a=document.createElement('textarea');a.value=t;document.body.appen
 try{ok=document.execCommand('copy')}catch(e){}a.remove()}
 b.textContent=ok?'Copied':'Select and copy';setTimeout(()=>b.textContent='Copy',2000)}))}
 bind(document);schedule();
+// iOS WebKit in the Home Assistant app sometimes doesn't repaint the panel after the fonts arrive, and the page stays blank
+// until something else forces a layout. Force one ourselves: when the fonts are ready, on returning to the panel, and
+// after each in-place refresh.
+function repaint(){const m=document.querySelector('main');if(!m)return;m.style.transform='translateZ(0)';void m.offsetHeight;
+requestAnimationFrame(()=>{m.style.transform=''})}
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(repaint);
+window.addEventListener('pageshow',repaint);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)repaint()});
 </script></body></html>"""
 PAGE = PAGE.replace('__FLAME__', FLAME)
 

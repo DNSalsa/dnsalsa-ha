@@ -1,6 +1,6 @@
 # DNSalsa
 
-Reach your Home Assistant from anywhere at your own address, like `jansen.dnsalsa.nl`. No port forwarding, no router settings, and your home IP stays hidden. The traffic runs through a Cloudflare Tunnel that DNSalsa sets up for you.
+Reach your Home Assistant from anywhere at your own address, like `myhome.dnsalsa.nl`. No port forwarding, no router settings, and your home IP stays hidden. The traffic runs through a Cloudflare Tunnel that DNSalsa sets up for you.
 
 For that you need a DNSalsa account with the Remote subscription. Without Remote, the app can still keep a hostname on your home address (dynamic DNS), see below.
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.2
+
+- The app page no longer flashes white while it waits for the connection: it updates in place instead of reloading.
+
 ## 1.3.1
 
 - cloudflared 2026.10.7.

@@ -710,7 +710,7 @@ def render():
         if code:
             mins = max(1, int((expires - time.time()) / 60))
             parts.append(f'''<div class="card hero"><div class="label">Pairing code</div>
-<div class="code">{html.escape(code)}</div>
+<div class="row"><div class="code" id="pair-code">{html.escape(code)}</div><button type="button" data-copy="pair-code">Copy</button></div>
 <ol><li>Open <a href="{server}/dashboard" target="_blank" rel="noopener">your DNSalsa dashboard</a>.</li>
 <li>At the hostname you want, pick what it should do:<br>
 <b>Setup → Home Assistant</b> to open Home Assistant from anywhere, without a port forward. This needs Remote, and the first

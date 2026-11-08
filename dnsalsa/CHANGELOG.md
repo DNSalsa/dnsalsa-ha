@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.5
+
+- A **Copy** button next to the pairing code.
+
 ## 1.3.4
 
 - On the first start, the app turns on **Show in sidebar** and **Watchdog**. Turn either off on the app's page and it stays off.

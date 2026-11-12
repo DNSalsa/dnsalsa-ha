@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.7
+
+- cloudflared 2026.11.0.
+
 ## 1.3.6
 
 - Fixes a blank app page on iPhone and iPad after pairing: the page now redraws itself once its fonts have loaded.

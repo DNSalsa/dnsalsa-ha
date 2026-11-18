@@ -8,8 +8,8 @@ ARG CLOUDFLARED_VERSION
 # Updated by .github/workflows/cloudflared.yml (a pull request every time Cloudflare releases a new version).
 RUN apk add --no-cache python3 \
  && case "${BUILD_ARCH}" in \
-      amd64)   ARCH=amd64; SUM=51f7c68b57ed7269164075d7e789efce5b59355982f06392deeb037d982a51fd ;; \
-      aarch64) ARCH=arm64; SUM=abe54a006acf9faf2d19ee9d953cb0d0804e92f59c5382a162e57b84d086f56f ;; \
+      amd64)   ARCH=amd64; SUM=97bb3b02d23a5980fc9c15a1a270e692da1923f103f920d5b16d4931d5ab55e7 ;; \
+      aarch64) ARCH=arm64; SUM=b155cec3e48e489cfb8e5c602769fb8c771083018d8881d68b4d18a791567c5a ;; \
       *) echo "Unsupported architecture: ${BUILD_ARCH}"; exit 1 ;; \
     esac \
  && curl -fsSL -o /usr/local/bin/cloudflared \

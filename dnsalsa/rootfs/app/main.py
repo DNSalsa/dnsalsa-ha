@@ -33,7 +33,7 @@ CLOUDFLARED = os.environ.get('DNSALSA_CLOUDFLARED', '/usr/local/bin/cloudflared'
 METRICS = '127.0.0.1:20241'
 SUPERVISOR = os.environ.get('DNSALSA_SUPERVISOR', 'http://supervisor')   # tests point this at a fake
 INGRESS_PEERS = {'172.30.32.2', '127.0.0.1'}  # Home Assistant's ingress proxy (and local tests)
-USER_AGENT = 'dnsalsa-ha/1.3'
+USER_AGENT = 'dnsalsa-ha/1.4.0'   # DNSalsa shows this version to the admin; keep it equal to the release
 MISSES_BEFORE_REMOVE = 3   # lookups in a row without an address before its record goes
 
 
@@ -68,6 +68,7 @@ class State:
         self.route_error = None
         self.connected = False
         self.wake = threading.Event()  # nudges the background loops
+        self.refresh = threading.Event()  # cloudflared stopped: ask DNSalsa whether the tunnel was replaced
         self.ddns = Ddns()             # dynamic DNS without a tunnel
 
     def _load(self):
@@ -290,6 +291,7 @@ def pairing_loop():
 # ── cloudflared ──
 def tunnel_loop():
     proc = None
+    running = None
     quick_exits = 0
     while True:
         saved = STATE.saved if mode(STATE.saved) == 'tunnel' else None
@@ -301,15 +303,27 @@ def tunnel_loop():
             STATE.wake.wait(5)
             STATE.wake.clear()
             continue
+        if proc and proc.poll() is None and running != saved['token']:
+            log('New tunnel token from DNSalsa: restarting cloudflared')
+            proc.terminate()
+            try:
+                proc.wait(10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            proc = None
+            quick_exits = 0
         if proc is None or proc.poll() is not None:
             if proc is not None:
+                STATE.refresh.set()
                 quick_exits = quick_exits + 1 if time.time() - started < 30 else 0
                 if quick_exits >= 5:
                     with STATE.lock:
                         STATE.error = ('Cloudflare keeps refusing the tunnel. If you removed this hostname or its tunnel '
                                        'in the DNSalsa dashboard, press "Pair again".')
                     time.sleep(60)
-            env = {**os.environ, 'TUNNEL_TOKEN': saved['token']}   # not on the command line, so it stays out of ps
+            running = saved['token']
+            env = {**os.environ, 'TUNNEL_TOKEN': running}   # not on the command line, so it stays out of ps
             proc = subprocess.Popen([CLOUDFLARED, 'tunnel', '--no-autoupdate', '--metrics', METRICS, 'run'], env=env)
             started = time.time()
             log('cloudflared started')
@@ -325,8 +339,46 @@ def tunnel_loop():
             if ok:
                 STATE.error = None
                 quick_exits = 0
+        if not ok and time.time() - started > 60:
+            STATE.refresh.set()   # running but not connecting: maybe the tunnel was replaced and the old one deleted
         STATE.wake.wait(10 if ok else 3)   # check often until connected, then calmly
         STATE.wake.clear()
+
+
+# ── A replaced tunnel ──
+# DNSalsa can replace a tunnel: after a leak, or when it moves to another Cloudflare account. It then hands the new
+# token to whoever shows the old one. Checked every few hours, and soon after cloudflared stops.
+REFRESH_EVERY = 6 * 3600
+REFRESH_SOON = 300   # at most this often while cloudflared keeps stopping
+
+
+def tunnel_refresh():
+    """Ask DNSalsa whether this tunnel got a new token; save it when it did (tunnel_loop then restarts cloudflared)."""
+    saved = STATE.saved
+    if mode(saved) != 'tunnel' or not saved:
+        return False
+    status, r = http_json('POST', f"{options()['server']}/api/tunnel/refresh", {'hostname': saved['hostname'], 'token': saved['token']})
+    if status == 200 and r.get('changed') and r.get('token'):
+        if STATE.saved is saved:
+            STATE.save({**saved, 'token': r['token']})
+            log('DNSalsa replaced this tunnel and handed over the new token')
+            STATE.wake.set()
+            return True
+    return False   # unchanged, an older DNSalsa without this check, or not ours anymore: nothing to do
+
+
+def refresh_loop():
+    last = time.time() - REFRESH_EVERY + random.randint(30, 300)   # first check a few minutes after start
+    while True:
+        soon = STATE.refresh.is_set()
+        if time.time() - last >= (REFRESH_SOON if soon else REFRESH_EVERY):
+            last = time.time()
+            STATE.refresh.clear()
+            try:
+                tunnel_refresh()
+            except Exception as e:  # noqa: BLE001  offline: next round
+                log(f'Could not check the tunnel with DNSalsa: {e}')
+        time.sleep(15)
 
 
 # ── Dynamic DNS without a tunnel ──
@@ -842,7 +894,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     os.makedirs(DATA, exist_ok=True)
-    for fn in (defaults_loop, pairing_loop, tunnel_loop, health_loop, ddns_loop):
+    for fn in (defaults_loop, pairing_loop, tunnel_loop, refresh_loop, health_loop, ddns_loop):
         threading.Thread(target=fn, daemon=True).start()
     log(f'DNSalsa app running, server {options()["server"]}')
     ThreadingHTTPServer(('0.0.0.0', INGRESS_PORT), Handler).serve_forever()

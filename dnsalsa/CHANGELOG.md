@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.9
+
+- cloudflared 2026.11.2.
+
 ## 1.3.8
 
 - cloudflared 2026.11.1.
